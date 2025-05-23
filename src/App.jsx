@@ -18,7 +18,7 @@ const allSlots = slotLayout.flatMap((row, rowIndex) =>
   ).filter(Boolean)
 );
 
-const classOptions = ["", "WIZ", "MAG", "DRU", "ENC", "BRD", "CLR", "SHM", "RNG", "ROG", "BER", "WAR", "PAL", "SHD", "BST", "MNK", "NEC"];
+const classOptions = ["","BER", "BRD","BST","CLR", "DRU", "ENC", "MAG", "MNK", "NEC", "PAL", "RNG", "ROG", "SHD","SHM" ,"WAR","WIZ",];
 
 const statList = [
   { label: "Shielding", base: "Shielding" },
@@ -47,6 +47,7 @@ const defaultGear = Object.fromEntries(
 );
 
 export default function EQBisPlanner() {
+  const wrapperRef = useRef(null);
   const [gear, setGear] = useState(defaultGear);
 
   useEffect(() => {
@@ -99,6 +100,18 @@ export default function EQBisPlanner() {
   const [activeSlot, setActiveSlot] = useState(null);
   const [filter, setFilter] = useState("");
 
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (wrapperRef.current && !wrapperRef.current.contains(event.target)) {
+        setActiveSlot(null);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, []);
+
   const handleSlotClick = (slot) => {
     setActiveSlot(slot);
     setFilter("");
@@ -131,7 +144,7 @@ export default function EQBisPlanner() {
   });
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-gray-900 text-white space-y-6">
+    <div ref={wrapperRef} className="min-h-screen w-full h-screen overflow-x-auto overflow-y-auto flex flex-col items-center justify-center bg-gray-900 text-white space-y-6">
       <h1 className="text-3xl font-extrabold">EverQuest BIS Planner</h1>
 
       <button
@@ -139,6 +152,13 @@ export default function EQBisPlanner() {
         className="px-4 py-2 bg-yellow-300 hover:bg-yellow-400 text-black font-semibold rounded"
       >
         Copy Build Link
+      </button>
+
+      <button
+        onClick={() => setGear(defaultGear)}
+        className="px-4 py-2 bg-red-400 hover:bg-red-500 text-white font-semibold rounded"
+      >
+        Reset Build
       </button>
 
       <div className="flex space-x-4">
@@ -270,10 +290,21 @@ export default function EQBisPlanner() {
                 slot ? (
                   <div key={`${slot}-${rowIndex}-${colIndex}`} className="relative">
                     <div
-                      className="w-24 h-24 bg-black border border-yellow-300 rounded-lg cursor-pointer hover:bg-yellow-500 flex items-center justify-center text-white text-xs font-bold text-center"
+                      className={`relative w-24 h-24 border border-yellow-300 rounded-lg cursor-pointer hover:bg-yellow-500 flex items-center justify-center text-white text-xs font-bold text-center ${gear[`${slot}-${rowIndex}-${colIndex}`] ? 'bg-black' : 'bg-gray-700'}`}
                       onClick={() => handleSlotClick(`${slot}-${rowIndex}-${colIndex}`)}
                     >
                       {gear[`${slot}-${rowIndex}-${colIndex}`]?.ItemName || slot}
+                      {gear[`${slot}-${rowIndex}-${colIndex}`] && (
+                        <button
+                          className="absolute top-0 right-0 m-1 text-red-400 text-xs hover:text-red-600"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleItemSelect(`${slot}-${rowIndex}-${colIndex}`, null);
+                          }}
+                        >
+                          ✖
+                        </button>
+                      )}
                     </div>
                     {activeSlot === `${slot}-${rowIndex}-${colIndex}` && (
                       <div className="absolute top-full mt-1 w-48 bg-gray-800 border border-yellow-300 rounded shadow-lg z-50">
@@ -329,6 +360,7 @@ export default function EQBisPlanner() {
               </div>
             );
           })}
+        <div className="h-24" />
         </div>
       </div>
     </div>
