@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import gearData from "./data/gear_data";
+import gearData from "./data/gear_data_full_temp";
 
 const slotLayout = [
   ["Ear", "Head", "Face", "Ear"],
@@ -49,13 +49,13 @@ const statList = [
   { label: "HP", base: "HP" },
   { label: "MP", base: "Mana" },
   { label: "AC", base: "AC" },
-  { label: "STR", heroic: "HStr" },
-  { label: "STA", heroic: "HSta" },
-  { label: "AGI", heroic: "HAgi" },
-  { label: "DEX", heroic: "HDex" },
-  { label: "WIS", heroic: "HWis" },
-  { label: "INT", heroic: "HInt" },
-  { label: "CHA", heroic: "HCha" },
+  { label: "STR", heroic: "HStr", base: "Str"},
+  { label: "STA", heroic: "HSta", base: "Sta" },
+  { label: "AGI", heroic: "HAgi", base: "Agi" },
+  { label: "DEX", heroic: "HDex", base: "Dex" },
+  { label: "WIS", heroic: "HWis", base: "Wis" },
+  { label: "INT", heroic: "HInt", base: "Int" },
+  { label: "CHA", heroic: "HCha", base: "Cha" },
   { label: "MAGIC", base: "MagicResist", heroic: "HMagic" },
   { label: "FIRE", base: "FireResist", heroic: "HFire" },
   { label: "COLD", base: "ColdResist", heroic: "HCold" },
@@ -118,8 +118,14 @@ const encodeMaskToBase64url = (mask) => {
     .replace(/=+$/, "");
 };
 
+function getItemIconPath(item) {
+  // TODO: add actual Item Ids to this?
+  return `../public/item_icons/item_${item.iconId}.png`; // assuming item.IconName holds a base filename like "sword_01"
+}
+
 export default function EQBisPlanner() {
   const wrapperRef = useRef(null);
+  const pickerRef = useRef(null);
   const [gear, setGear] = useState(defaultGear);
   const [selectedClasses, setSelectedClasses] = useState(["", "", ""]);
   const [activeSlot, setActiveSlot] = useState(null);
@@ -240,7 +246,9 @@ export default function EQBisPlanner() {
   // --------------------------------------------
   useEffect(() => {
     const handleClickOutside = (evt) => {
-      if (wrapperRef.current && !wrapperRef.current.contains(evt.target)) {
+      const dropdowns = document.querySelectorAll(".z-50");
+      const clickedInsideAny = Array.from(dropdowns).some((dropdown) => dropdown.contains(evt.target));
+      if (!wrapperRef.current.contains(evt.target) && !clickedInsideAny) {
         setActiveSlot(null);
       }
     };
@@ -298,7 +306,9 @@ export default function EQBisPlanner() {
     if (!activeSlot) return false;
     const slotType = activeSlot.split("-")[0];
     const nameMatch = item.ItemName.toLowerCase().includes(filter.toLowerCase());
-    const slotMatch = item.SlotType === slotType;
+    const slotMatch = Array.isArray(item.SlotType)
+    ? item.SlotType.includes(slotType)
+    : item.SlotType === slotType;;
     // Also filter by selectedClasses: if none chosen, allow all
     const allowedClasses = item.CLASSES
       ? item.CLASSES.split(",").map((c) => c.trim())
@@ -481,8 +491,15 @@ export default function EQBisPlanner() {
                         handleSlotClick(`${slot}-${rowIndex}-${colIndex}`)
                       }
                     >
-                      {gear[`${slot}-${rowIndex}-${colIndex}`]?.ItemName ||
-                        slot}
+                      {gear[`${slot}-${rowIndex}-${colIndex}`] ? (
+                          <img
+                            src={getItemIconPath(gear[`${slot}-${rowIndex}-${colIndex}`])}
+                            alt={gear[`${slot}-${rowIndex}-${colIndex}`].ItemName}
+                            className="w-16 h-16 object-contain"
+                          />
+                        ) : (
+                          slot
+                      )}
                       {gear[`${slot}-${rowIndex}-${colIndex}`] && (
                         <button
                           className="absolute top-0 right-0 m-1 text-red-400 text-xs hover:text-red-600"
@@ -550,6 +567,8 @@ export default function EQBisPlanner() {
               if (!item) return;
               if (stat.base && item[stat.base]) baseTotal += Number(item[stat.base]);
               if (stat.heroic && item[stat.heroic]) heroicTotal += Number(item[stat.heroic]);
+              if (stat.heroic && item[stat.heroic]) baseTotal += Number(item[stat.heroic]);
+
             });
             return (
               <div
