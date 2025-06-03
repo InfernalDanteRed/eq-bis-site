@@ -4,34 +4,42 @@ import os
 
 URL = "https://eqdb.net/api/v1/items?id="
 OUTPUT_FILE = "eq_items_fetched.txt"  # .jsonl = JSON lines format
+ERROR_FILE = "eq_items_failed.txt"
 
-def fetch_and_append_item(item_id, output_path):
-    try:
-        response = requests.get(f"{URL}{item_id}")
-        response.raise_for_status()
-        item_data = response.json()
+def fetch_and_append_item(item_id, output_path, retry_count):
+    if retry_count<3:
+        try:
+            response = requests.get(f"{URL}{item_id}")
+            response.raise_for_status()
+            item_data = response.json()
 
-        if isinstance(item_data, list):
-            items = item_data
-        else:
-            items = [item_data]
+            if isinstance(item_data, list):
+                items = item_data
+            else:
+                items = [item_data]
+            if item_data == "{}":
+                return
 
-        with open(output_path, "a", encoding="utf-8") as f:
-            for item in items:
-                f.write(json.dumps(item) + "\n")
+            with open(output_path, "a", encoding="utf-8") as f:
+                for item in items:
+                    f.write(json.dumps(item) + "\n")
 
-        print(f"✅ Item {item_id} written to {output_path}")
-    except requests.RequestException as e:
-        print(f"❌ Failed to fetch item {item_id}: {e}")
-    except json.JSONDecodeError:
-        print(f"❌ Invalid JSON from item {item_id}")
+            print(f"✅ Item {item_id} written to {output_path}")
+        except requests.RequestException as e:
+            print(f"❌ Failed to fetch item {item_id}: {e}")
+            fetch_and_append_item(item_id, output_path, retry_count+1)
+        except json.JSONDecodeError:
+            print(f"❌ Invalid JSON from item {item_id}")
+    else:
+        with open(ERROR_FILE, "a", encoding="utf-8") as g:
+            g.write(str(item_id) + ",")
 
 # Example range — update this as needed
-for i in range(2004407, 2004420):
-    fetch_and_append_item(i, OUTPUT_FILE)
+for i in range(1001, 107000):
+    fetch_and_append_item(i, OUTPUT_FILE, 0)
 
-for i in range(2020898, 2020920):
-    fetch_and_append_item(i, OUTPUT_FILE)
+for i in range(1001001, 1010700):
+    fetch_and_append_item(i, OUTPUT_FILE, 0)
 
-for i in range(2004407, 2004410):
-    fetch_and_append_item(i, OUTPUT_FILE)
+for i in range(2001001, 2107000):
+    fetch_and_append_item(i, OUTPUT_FILE, 0)

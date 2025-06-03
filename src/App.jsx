@@ -83,27 +83,11 @@ const encode18BitId = (id) => {
   return BASE64URL_CHARS[c1] + BASE64URL_CHARS[c2] + BASE64URL_CHARS[c3];
 };
 
-
-const encodeSlotToBase64url = (slotId, gear) => {
-  const itemId = gear[slotId]?.itemId || 0;
-  const aug0Id = gear[`${slotId}-aug0`]?.itemId || 0;
-  const aug1Id = gear[`${slotId}-aug1`]?.itemId || 0;
-
-  return (
-    encode18BitId(itemId) +
-    encode18BitId(aug0Id) +
-    encode18BitId(aug1Id)
-  );
-};
-
 const decode18BitId = (chunk) => {
-  const base64 = chunk.replace(/-/g, '+').replace(/_/g, '/') + '=';
-  const binary = atob(base64);
-  return (
-    (binary.charCodeAt(0) << 10) |
-    (binary.charCodeAt(1) << 2) |
-    (binary.charCodeAt(2) >> 6)
-  );
+  const i1 = BASE64URL_CHARS.indexOf(chunk[0]);
+  const i2 = BASE64URL_CHARS.indexOf(chunk[1]);
+  const i3 = BASE64URL_CHARS.indexOf(chunk[2]);
+  return (i1 << 12) | (i2 << 6) | i3;
 };
 
 const encodeMaskToBase64url = (mask) => {
@@ -119,8 +103,7 @@ const encodeMaskToBase64url = (mask) => {
 };
 
 function getItemIconPath(item) {
-  // TODO: add actual Item Ids to this?
-  return `../public/item_icons/item_${item.iconId}.png`; // assuming item.IconName holds a base filename like "sword_01"
+  return `../public/item_icons/item_${item.iconId}.png`; 
 }
 
 export default function EQBisPlanner() {
@@ -133,16 +116,12 @@ export default function EQBisPlanner() {
   const [currentHash, setCurrentHash] = useState(window.location.hash);
   const skipNextHashLoad = useRef(false);
   const lastParsedHash = useRef(""); // tracks what we’ve already parsed
+  const hashWriteTimer = useRef(null);
+
 
 
   const loadFromHash = () => {
     const rawHash = window.location.hash.slice(1);
-
-    if (skipNextHashLoad.current || rawHash === lastParsedHash.current) {
-      skipNextHashLoad.current = false;
-      return;
-    }
-    lastParsedHash.current = rawHash
     // If user used ?build=…&classes=…, we can read from params:
     const params = new URLSearchParams(rawHash);
     const encoded =
@@ -157,7 +136,6 @@ export default function EQBisPlanner() {
       const [maskEncoded, idHexes] = encoded.split(":");
       if (!maskEncoded || !idHexes) return;      
       const mask = decodeBase64urlMask(maskEncoded);
-
       // Build a lookup from itemId → gearData object
       // TODO: Make this not load everything from memory
       const gearByItemId = {};
@@ -167,7 +145,6 @@ export default function EQBisPlanner() {
 
       const newGear = {};
       let hexIndex = 0;
-
       allSlots.forEach((slotObj, sIndex) => {
         // If that bit is set, read 6 hex digits: [itemId][aug0Id][aug1Id]
         if (mask & (1 << sIndex)) {
@@ -183,10 +160,7 @@ export default function EQBisPlanner() {
           hexIndex += 9;
                   }
         });
-
       setGear(newGear);
-      skipNextHashLoad.current = true;
-
     }
   };
   // --------------------------------------------
@@ -202,7 +176,11 @@ export default function EQBisPlanner() {
   // 2) Whenever `gear` or `selectedClasses` changes, rebuild URL hash
   // --------------------------------------------
   useEffect(() => {
-    skipNextHashLoad.current = true;
+    if (hashWriteTimer.current) {
+      clearTimeout(hashWriteTimer.current);
+    }
+    hashWriteTimer.current = window.setTimeout(() => {
+      skipNextHashLoad.current = true;
 
     // (a) Build a 24‐bit presence mask
     let mask = 0;
@@ -238,8 +216,22 @@ export default function EQBisPlanner() {
     const newHash = classCode
       ? `#build=${encoded}&classes=${classCode}`
       : `#build=${encoded}`;
-    window.history.replaceState(null, "", newHash);
-  }, [gear, selectedClasses]);
+      const currentHash = window.location.hash;
+      if (
+        currentHash !== newHash &&
+        lastParsedHash.current !== newHash
+      ) {
+        window.history.replaceState(null, "", newHash);
+      }
+      hashWriteTimer.current = null;
+    }, 300);
+    return () => {
+      if (hashWriteTimer.current) {
+        clearTimeout(hashWriteTimer.current);
+        hashWriteTimer.current = null;
+      }
+    };
+    }, [gear, selectedClasses]);
 
   // --------------------------------------------
   // 3) Click‐outside logic to close any open “picker” dropdown
@@ -257,20 +249,6 @@ export default function EQBisPlanner() {
   }, []);
 
   const currentHashRef = useRef(window.location.hash);
-
-  // --------------------------------------------
-  // 4) Detect manual changes to the hash and reload it
-  // --------------------------------------------
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const realHash = window.location.hash;
-      if (realHash !== lastParsedHash.current && !skipNextHashLoad.current) {
-        loadFromHash();
-      }
-    }, 200); // Check every 200ms
-  
-    return () => clearInterval(interval);
-  }, []);
 
   // --------------------------------------------
   // 5) Handlers for slot ↔ picker logic
@@ -310,9 +288,10 @@ export default function EQBisPlanner() {
     ? item.SlotType.includes(slotType)
     : item.SlotType === slotType;;
     // Also filter by selectedClasses: if none chosen, allow all
-    const allowedClasses = item.CLASSES
-      ? item.CLASSES.split(",").map((c) => c.trim())
-      : [];
+    const allowedClasses =
+  typeof item.CLASSES === "string"
+    ? item.CLASSES.split(",").map((c) => c.trim())
+    : [];
     const anyClassSelected = selectedClasses.filter(Boolean);
     const classOK =
       anyClassSelected.length === 0 ||
@@ -325,7 +304,7 @@ export default function EQBisPlanner() {
       ref={wrapperRef}
       className="min-h-screen w-full flex flex-col items-center justify-start bg-gray-900 text-white p-4 space-y-6"
     >
-      <h1 className="text-3xl font-extrabold">EverQuest BIS Planner</h1>
+      <h1 className="text-3xl font-extrabold">THJ Thats My Gear Planner</h1>
 
       <button
         onClick={() => navigator.clipboard.writeText(window.location.href)}
