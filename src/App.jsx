@@ -311,6 +311,8 @@ export default function EQBisPlanner() {
   });
 
   return (
+    <div className="w-full bg-gray-900">
+
     <div
       ref={wrapperRef}
       className="min-h-screen w-full flex flex-col items-center justify-start bg-gray-900 text-white p-4 space-y-6"
@@ -331,7 +333,7 @@ export default function EQBisPlanner() {
       </button>
 
       {/* Class selectors */}
-      <div className="flex space-x-4">
+      <div className="flex flex-wrap gap-2 justify-center w-full max-w-md">
         {selectedClasses.map((cls, idx) => (
           <select
             key={idx}
@@ -464,7 +466,7 @@ export default function EQBisPlanner() {
         {/* Gear Grid */}
         <div className="bg-gray-800 p-6 rounded-lg shadow-xl space-y-4">
           {slotLayout.map((row, rowIndex) => (
-            <div key={rowIndex} className="grid grid-cols-4 gap-4">
+            <div key={rowIndex} className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
               {row.map((slot, colIndex) =>
                 slot ? (
                   <div
@@ -472,7 +474,7 @@ export default function EQBisPlanner() {
                     className="relative"
                   >
                     <div
-                      className={`relative w-24 h-24 border border-yellow-300 rounded-lg cursor-pointer hover:bg-yellow-500 flex items-center justify-center text-white text-xs font-bold text-center ${
+                      className={`relative w-20 h-20 sm:w-24 sm:h-24 border border-yellow-300 rounded-lg cursor-pointer hover:bg-yellow-500 flex items-center justify-center text-white text-xs font-bold text-center ${
                         gear[`${slot}-${rowIndex}-${colIndex}`]
                           ? "bg-black"
                           : "bg-gray-600"
@@ -575,6 +577,7 @@ export default function EQBisPlanner() {
           <div className="h-24" />
         </div>
       </div>
+    </div>
     </div>
   );
 }
