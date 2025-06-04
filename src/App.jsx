@@ -103,7 +103,7 @@ const encodeMaskToBase64url = (mask) => {
 };
 
 function getItemIconPath(item) {
-  return `../public/item_icons/item_${item.iconId}.png`; 
+  return `/item_icons/item_${item.iconId}.png`; 
 }
 
 export default function EQBisPlanner() {
