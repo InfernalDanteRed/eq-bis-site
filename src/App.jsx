@@ -43,9 +43,17 @@ const classOptions = [
 
 const statList = [
   { label: "Shielding", base: "Shielding" },
+  { label: "SpellShield", base: "SpellShield"},
+  { label: "DoTShield", base: "DoTShield"},
+  { label: "DmgShieldMit", base: "DmgShieldMit"},
   { label: "Avoidance", base: "Avoidance" },
+  { label: "Attack", base: "Attack"},
+  { label: "Accuracy", base: "Accuracy"},
+  { label: "Strikethrough", base: "Strikethrough"},
+  { label: "StunResist", base: "StunResist"},
   { label: "Spell Damage", base: "SpellDamage" },
   { label: "Heal Amount", base: "HealAmount" },
+  { label: "Haste", base: "Haste" },
   { label: "HP", base: "HP" },
   { label: "MP", base: "Mana" },
   { label: "AC", base: "AC" },
@@ -61,6 +69,7 @@ const statList = [
   { label: "COLD", base: "ColdResist", heroic: "HCold" },
   { label: "DISEASE", base: "DiseaseResist", heroic: "HDisease" },
   { label: "POISON", base: "PoisonResist", heroic: "HPoison" },
+
 ];
 
 const defaultGear = Object.fromEntries(
@@ -240,7 +249,7 @@ export default function EQBisPlanner() {
     const handleClickOutside = (evt) => {
       const dropdowns = document.querySelectorAll(".z-50");
       const clickedInsideAny = Array.from(dropdowns).some((dropdown) => dropdown.contains(evt.target));
-      if (!wrapperRef.current.contains(evt.target) && !clickedInsideAny) {
+      if (!clickedInsideAny) {
         setActiveSlot(null);
       }
     };
@@ -254,8 +263,10 @@ export default function EQBisPlanner() {
   // 5) Handlers for slot ↔ picker logic
   // --------------------------------------------
   const handleSlotClick = (slot) => {
-    setActiveSlot(slot);
-    setFilter("");
+    setTimeout(() => {
+      setActiveSlot(slot);
+      setFilter("");
+    }, 0);
   };
   const handleItemSelect = (slot, item) => {
     setGear((prev) => ({ ...prev, [slot]: item }));
@@ -337,7 +348,7 @@ export default function EQBisPlanner() {
         ))}
       </div>
 
-      <div className="flex space-x-8">
+      <div className="flex space-x-8 overflow-x-auto max-w-full px-2">
         {/* Effects Panel */}
         <div className="bg-gray-800 p-4 rounded-lg shadow-xl w-[20rem] space-y-2">
           <h2 className="text-lg font-bold mb-2 text-center">Effects</h2>
