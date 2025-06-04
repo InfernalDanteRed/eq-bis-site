@@ -350,7 +350,7 @@ export default function EQBisPlanner() {
         ))}
       </div>
 
-      <div className="flex space-x-8 overflow-x-auto max-w-full px-2">
+      <div className="flex flex-row flex-wrap lg:flex-nowrap gap-4 justify-center w-full">
         {/* Effects Panel */}
         <div className="bg-gray-800 p-4 rounded-lg shadow-xl w-[20rem] space-y-2">
           <h2 className="text-lg font-bold mb-2 text-center">Effects</h2>
@@ -464,7 +464,7 @@ export default function EQBisPlanner() {
         </div>
 
         {/* Gear Grid */}
-        <div className="bg-gray-800 p-6 rounded-lg shadow-xl space-y-4">
+        <div className="bg-gray-800 p-6 rounded-lg shadow-xl space-y-4 w-full max-w-[28rem] flex-shrink-0">
           {slotLayout.map((row, rowIndex) => (
             <div key={rowIndex} className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
               {row.map((slot, colIndex) =>
