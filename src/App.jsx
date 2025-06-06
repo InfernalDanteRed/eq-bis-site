@@ -1,7 +1,11 @@
 import React, { useMemo, useState, useEffect, useRef } from "react";
 import indexJson from "/public/gear_chunks/v1/index.json";
+import rawSpellMap from "/public/spell_map.json";
 import { Analytics } from '@vercel/analytics/react';
 
+const spellMap = Array.isArray(rawSpellMap)
+  ? rawSpellMap.reduce((acc, cur) => ({ ...acc, ...cur }), {})
+  : rawSpellMap;
 
 const slotLayout = [
   ["Ear", "Head", "Face", "Ear"],
@@ -356,29 +360,80 @@ export default function EQBisPlanner() {
         <div className="flex flex-row flex-wrap lg:flex-nowrap gap-4 justify-center w-full">
           <div className="bg-gray-800 p-4 rounded-lg shadow-xl w-[20rem] space-y-2">
             <h2 className="text-lg font-bold mb-2 text-center">Effects</h2>
-            {["ClickyEffect","FocusEffectOrSkillMod","WeaponProc"].map((eKey) => {
-              const effects = Object.values(gear).filter((it) => it && it[eKey]).map((it) => it[eKey]);
+            {["ClickyEffect", "FocusEffectId", "WeaponProc"].map((eKey) => {
+              const effectsWithSlots = Object.entries(gear)
+                .filter(([slotId, item]) =>
+                  item &&
+                  typeof item[eKey] === "number" &&
+                  item[eKey] !== -1
+                )
+                .map(([slotId, item]) => ({
+                  slotName: slotId.split("-")[0],
+                  effId: item[eKey],
+                }));
+
               return (
                 <div key={eKey} className="border-b border-gray-600 py-1">
                   <div className="text-sm font-semibold text-yellow-300">{eKey}</div>
-                  {effects.length > 0 ? (
-                    <ul className="list-disc list-inside text-sm text-gray-300">{effects.map((eff, i) => <li key={i}>{eff}</li>)}</ul>
-                  ) : (<div className="text-xs text-gray-500 italic">None</div>)}
+                  {effectsWithSlots.length > 0 ? (
+                    <ul className="list-disc list-inside text-sm text-gray-300">
+                      {effectsWithSlots.map(({ slotName, effId }, i) => {
+                        const name = spellMap[String(effId)] || effId;
+                        return (
+                          <li key={i}>
+                            <span className="font-semibold">{slotName}:</span>{" "}
+                            <a
+                              href={`https://eqdb.net/spell/detail/${effId}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="underline hover:text-yellow-300"
+                            >
+                              {name}
+                            </a>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  ) : (
+                    <div className="text-xs text-gray-500 italic">None</div>
+                  )}
                 </div>
               );
-            })}
+          })}
           </div>
           <div className="bg-gray-800 p-4 rounded-lg shadow-xl w-[36rem] space-y-2">
             <h2 className="text-lg font-bold mb-2 text-center">Equipped Items</h2>
             {allSlots.map(({ id, label }) => (
               <div key={id} className="flex justify-between text-sm border-b border-gray-600 py-1 relative">
                 <span>{label}</span>
-                <span className="text-gray-300 italic">{gear[id]?.ItemName || "Not Equipped"}</span>
-                <div className="flex flex-col ml-2 space-y-1">
+                <span className="text-gray-300 italic">
+                  {gear[id] ? (
+                    <a
+                      href={`https://eqdb.net/item/detail/${gear[id].itemId}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline hover:text-yellow-400"
+                    >
+                      {gear[id].ItemName}
+                    </a>
+                  ) : (
+                    "Not Equipped"
+                  )}
+                </span>                
+              <div className="flex flex-col ml-2 space-y-1">
                   {[0, 1].map((i) => (
                     <div key={i} className="flex items-center space-x-2 relative">
                       <div className="w-3 h-3 bg-yellow-300 rounded-sm cursor-pointer hover:bg-yellow-500" onClick={() => handleSlotClick(`${id}-aug${i}`)} />
-                      <span className="text-xs text-gray-300">{gear[`${id}-aug${i}`]?.ItemName || ""}</span>
+                      {gear[`${id}-aug${i}`] && (
+                      <a
+                        href={`https://eqdb.net/item/detail/${gear[`${id}-aug${i}`].itemId}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs underline hover:text-yellow-400"
+                      >
+                        {gear[`${id}-aug${i}`].ItemName}
+                      </a>
+                      )}
                       {gear[`${id}-aug${i}`] && <button className="ml-1 text-red-400 text-xs hover:text-red-600" onClick={() => handleItemSelect(`${id}-aug${i}`, null)}>✖</button>}
                       {activeSlot === `${id}-aug${i}` && (
                         <div className="absolute z-50 top-full left-0 mt-1 w-48 bg-gray-800 border border-yellow-300 rounded shadow-lg">
