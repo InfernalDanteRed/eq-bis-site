@@ -4,7 +4,7 @@ import argparse
 from collections import defaultdict
 
 # CONFIG
-CHUNK_SIZE = 500
+CHUNK_SIZE = 800
 
 # ARGUMENTS
 parser = argparse.ArgumentParser()

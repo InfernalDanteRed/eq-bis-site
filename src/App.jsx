@@ -1,6 +1,7 @@
 import React, { useMemo, useState, useEffect, useRef } from "react";
-import gearData from "./data/gear_data";
 import indexJson from "/public/gear_chunks/v1/index.json";
+import { Analytics } from '@vercel/analytics/react';
+
 
 const slotLayout = [
   ["Ear", "Head", "Face", "Ear"],
@@ -445,6 +446,7 @@ export default function EQBisPlanner() {
           </div>
         </div>
       </div>
+      <Analytics />
     </div>
   );
 }
