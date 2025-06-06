@@ -1,5 +1,7 @@
-import React, { useState, useEffect, useRef } from "react";
-import gearData from "./data/gear_data_full_temp";
+import React, { useMemo, useState, useEffect, useRef } from "react";
+import gearData from "./data/gear_data";
+import indexJson from "/public/gear_chunks/v1/index.json";
+
 
 const slotLayout = [
   ["Ear", "Head", "Face", "Ear"],
@@ -111,6 +113,66 @@ const encodeMaskToBase64url = (mask) => {
     .replace(/=+$/, "");
 };
 
+// 2. Helper: encode an array of 8-bit values into Base64URL
+const encodeChunkIdsToBase64url = (ids) => {
+  // a) Turn each ID into exactly 8 bits
+  let bitString = ids
+    .map((id) => id.toString(2).padStart(8, "0"))
+    .join("");
+  // b) Pad to a multiple of 6 bits by adding zeroes at end
+  while (bitString.length % 6 !== 0) {
+    bitString += "0";
+  }
+  // c) Take each 6-bit chunk and map to a Base64URL char
+  let result = "";
+  for (let i = 0; i < bitString.length; i += 6) {
+    const sextet = parseInt(bitString.slice(i, i + 6), 2);
+    result += BASE64URL_CHARS[sextet];
+  }
+  return result;
+};
+
+const decodeChunkIdsFromBase64url = (str) => {  
+  // 1) Build a reverse lookup table: char → value (0–63)
+  const lookup = {};
+  for (let i = 0; i < BASE64URL_CHARS.length; i++) {
+    lookup[BASE64URL_CHARS[i]] = i;
+  }
+
+  // 2) Convert each Base64URL character into its 6-bit binary string
+  //    and concatenate them into one long bit‐string.
+  let bitString = "";
+  for (const char of str) {
+    const val = lookup[char];
+    // val.toString(2).padStart(6, "0") turns 3 → "000011", etc.
+    bitString += val.toString(2).padStart(6, "0");
+  }
+
+  // 3) Because we originally padded with zeroes to make the length a multiple of 6,
+  //    now we strip off the extra padding bits at the end until the bit-string length is a multiple of 8.
+  while (bitString.length % 8 !== 0) {
+    bitString = bitString.slice(0, -1);
+  }
+
+  // 4) Split the trimmed bitString into 8-bit chunks, parse each as a number, push into an array.
+  const ids = [];
+  for (let i = 0; i < bitString.length; i += 8) {
+    const byteStr = bitString.slice(i, i + 8);
+    ids.push(parseInt(byteStr, 2));
+  }
+
+  return ids;
+};
+
+
+
+function getChunkKeyForQuery(activeSlot, filterText) {
+  if (!activeSlot) return null;
+  const slotType = activeSlot.split("-")[0].toLowerCase();
+  const prefix = filterText.slice(0, 3).toLowerCase();
+  return `v1_chunk_${slotType}_${prefix}`;
+}
+
 function getItemIconPath(item) {
   return `/item_icons/item_${item.iconId}.png`; 
 }
@@ -126,10 +188,55 @@ export default function EQBisPlanner() {
   const skipNextHashLoad = useRef(false);
   const lastParsedHash = useRef(""); // tracks what we’ve already parsed
   const hashWriteTimer = useRef(null);
+  const [chunkKeys, setChunkKeys] = useState([]);
+  const [loadedChunks, setLoadedChunks] = useState({});
+  const [initialChunkIds, setInitialChunkIds] = useState([]);
 
 
+  const findChunkForSlotAndSearch = (slotType, searchText) => {
+    if (!slotType || searchText.length === 0) return null;
+    const key = searchText.slice(0, 3).toLowerCase();
+  
+    for (const filename of Object.keys(chunkFilenameToId)) {
+      const core = filename.replace(/^v1_chunk_/, "").replace(/\.json$/, "");
+      const parts = core.split("_"); // ["arms","aba","ber","72"]
+  
+      if (parts[0] !== slotType) continue;
+      const start = parts[1];
+      const end = parts[2];
+  
+      if (key >= start && key <= end) {
+        return { filename, id: chunkFilenameToId[filename] };
+      }
+    }
+    return null;
+  };
+
+const { chunkFilenameToId, idToChunkFilename } = useMemo(() => {
+  const filenameToId = {};
+  const idToFilename = {};
+  indexJson.forEach((obj) => {
+    const filename = Object.keys(obj)[0];
+    const id = obj[filename];
+    filenameToId[filename] = id;
+    idToFilename[id] = filename;
+  });
+  return { chunkFilenameToId: filenameToId, idToChunkFilename: idToFilename };
+}, []);
+
+  const gearByItemId = useMemo(() => {
+    const map = {};
+    // Instead of using the full static gearData, we loop through loadedChunks only:
+    Object.values(loadedChunks).forEach((chunkArray) => {
+      chunkArray.forEach((item) => {
+        map[item.itemId] = item;
+      });
+    });
+    return map;
+  }, [loadedChunks]);
 
   const loadFromHash = () => {
+    console.log("Loading from hash");
     const rawHash = window.location.hash.slice(1);
     // If user used ?build=…&classes=…, we can read from params:
     const params = new URLSearchParams(rawHash);
@@ -142,15 +249,17 @@ export default function EQBisPlanner() {
 
     if (encoded.length >= 4) {
       // First 6 hex chars = 24‐bit presence mask
-      const [maskEncoded, idHexes] = encoded.split(":");
+      const [maskEncoded, idHexes, chunkBase64] = encoded.split(":");
       if (!maskEncoded || !idHexes) return;      
       const mask = decodeBase64urlMask(maskEncoded);
       // Build a lookup from itemId → gearData object
       // TODO: Make this not load everything from memory
-      const gearByItemId = {};
-      gearData.forEach((item) => {
-        gearByItemId[item.itemId] = item;
-      });
+
+      if (chunkBase64) {
+        const parsedChunkIds = decodeChunkIdsFromBase64url(chunkBase64);
+        // e.g. parsedChunkIds = [ 72, 73, 74 ] (numeric chunk IDs)
+        setInitialChunkIds(parsedChunkIds);
+      }
 
       const newGear = {};
       let hexIndex = 0;
@@ -170,6 +279,7 @@ export default function EQBisPlanner() {
                   }
         });
       setGear(newGear);
+      console.log("end loading")
     }
   };
   // --------------------------------------------
@@ -216,12 +326,32 @@ export default function EQBisPlanner() {
       }
     });
 
+    const chunkIdSet = new Set();
+
+    allSlots.forEach((slotObj) => {
+      const slotName = slotObj.id.split("-")[0];
+      const gearName = gear[slotObj.id]?.ItemName || "";
+      const chunkInfo = findChunkForSlotAndSearch(slotName.toLowerCase(),  gearName);
+      console.log(slotName, gearName, chunkInfo);
+      if (chunkInfo) {
+        chunkIdSet.add(chunkInfo.id);
+      }
+    });
+    console.log(chunkIdSet);
+
+    const chunkBase64 = encodeChunkIdsToBase64url(Array.from(chunkIdSet));
+
+    const testIds = decodeChunkIdsFromBase64url(chunkBase64);
+    console.log("test ids");
+    console.log(testIds);
+
     // (c) Class combo code: just join with “‐”, or “00” if blank
     const classCode = selectedClasses
       .map((cls) => (cls ? cls : "00"))
       .join("-");
 
-    const encoded = maskBase64 + ":" + encodedIds;
+    let encoded = maskBase64 + ":" + encodedIds;
+    encoded = chunkBase64 ? encoded + ":" + chunkBase64 : encoded;
     const newHash = classCode
       ? `#build=${encoded}&classes=${classCode}`
       : `#build=${encoded}`;
@@ -257,6 +387,88 @@ export default function EQBisPlanner() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  useEffect(() => {
+    console.log("updating chunks");
+    // Determine which chunkKey we need for the current slot + filter:
+    const chunkKey = getChunkKeyForQuery(activeSlot, filter);
+    console.log("chunk key");
+    console.log(chunkKey);
+    if (!chunkKey) {
+      return; // no slot open or filter too short → nothing to fetch
+    }
+  
+    const slotType = activeSlot ? activeSlot.split("-")[0].toLowerCase() : null;
+    const chunkInfo = findChunkForSlotAndSearch(slotType, filter);
+
+        // If we haven’t loaded this chunk yet, fetch its JSON file:
+    if (chunkInfo && !loadedChunks[chunkInfo.filename]) {
+      console.log("Fetching key");
+      console.log(loadedChunks);
+      console.log(chunkInfo.filename);
+    // Mark “in‐progress” so we don’t refire on every keystroke:
+    setChunkKeys((prev) => {
+      if (prev.includes(chunkInfo.filename)) return prev;
+      return [...prev, chunkInfo.filename];
+    });
+
+    if (chunkInfo) {
+      console.log("chunk info", chunkInfo);
+      // e.g. chunkInfo = { filename: "v1_chunk_arms_aba_ber_72.json", id: 73 }
+      fetch(`/gear_chunks/v1/${chunkInfo.filename}`)
+        .then((res) => {
+          if (!res.ok) {
+            throw new Error(`Chunk not found: ${chunkInfo.filename}`);
+          }
+          return res.json();
+        })
+        .then((itemsArray) => {
+          setLoadedChunks((prev) => ({
+            ...prev,
+            [chunkInfo.filename]: itemsArray,
+          }));
+        })
+        .catch((err) => {
+          console.error("Error loading chunk:", chunkInfo.filename, err);
+          // Prevent infinite retries by stubbing in an empty array:
+          setLoadedChunks((prev) => ({
+            ...prev,
+            [chunkInfo.filename]: [],
+          }));
+        });
+    }
+  }
+}, [activeSlot, filter, loadedChunks]);
+
+  useEffect(() => {
+    initialChunkIds.forEach((chunkId) => {
+      console.log("chunk info", chunkId);
+      const filename = idToChunkFilename[chunkId];
+      console.log(filename);
+      // e.g. chunkInfo = { filename: "v1_chunk_arms_aba_ber_72.json", id: 73 }
+      fetch(`/gear_chunks/v1/${filename}`)
+        .then((res) => {
+          if (!res.ok) {
+            throw new Error(`Chunk not found: ${filename}`);
+          }
+          return res.json();
+        })
+        .then((itemsArray) => {
+          setLoadedChunks((prev) => ({
+            ...prev,
+            [filename]: itemsArray,
+          }));
+        })
+        .catch((err) => {
+          console.error("Error loading chunk:", filename, err);
+          // Prevent infinite retries by stubbing in an empty array:
+          setLoadedChunks((prev) => ({
+            ...prev,
+            [filename]: [],
+          }));
+        });
+    });
+  }, [initialChunkIds]);
+
   const currentHashRef = useRef(window.location.hash);
 
   // --------------------------------------------
@@ -291,7 +503,7 @@ export default function EQBisPlanner() {
     );
 
   // Filtered list of items (for whichever slot is active)
-  const filteredGearData = gearData.filter((item) => {
+  const filteredGearData = Object.values(gearByItemId).filter((item) => {
     if (!activeSlot) return false;
     const slotType = activeSlot.split("-")[0];
     const nameMatch = item.ItemName.toLowerCase().includes(filter.toLowerCase());

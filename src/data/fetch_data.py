@@ -35,11 +35,17 @@ def fetch_and_append_item(item_id, output_path, retry_count):
             g.write(str(item_id) + ",")
 
 # Example range — update this as needed
-for i in range(1001, 107000):
-    fetch_and_append_item(i, OUTPUT_FILE, 0)
+#for i in range(1001, 107000):
+#    fetch_and_append_item(i, OUTPUT_FILE, 0)
 
-for i in range(1001001, 1010700):
-    fetch_and_append_item(i, OUTPUT_FILE, 0)
+#for i in range(1001001, 1010700):
+#    fetch_and_append_item(i, OUTPUT_FILE, 0)
 
-for i in range(2001001, 2107000):
+#for i in range(2001001, 2107000):
+#    fetch_and_append_item(i, OUTPUT_FILE, 0)
+
+#for item in [42480,61499,80615,90282,90283,90284,90285,90286,90287,90288,90289,90290,90291,99492,2002844,2021724,2040411,2059450,2059559,2059560,2076838,2095499]:
+#    fetch_and_append_item(item, OUTPUT_FILE, 0)
+
+for i in range(1010700, 1107000):
     fetch_and_append_item(i, OUTPUT_FILE, 0)

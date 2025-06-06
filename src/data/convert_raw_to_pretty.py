@@ -51,6 +51,8 @@ SLOT_CLASSES = {
     15: "BER", # 32768
 }
 
+itemtypes = set()
+
 def parse_slot_types(slot_mask):
     slots = []
     for i in range(24):
@@ -75,8 +77,13 @@ with open("eq_items_fetched.txt", "r", encoding="utf-8") as f:
 items = []
 for line in lines:
     try:
+        #print(line)
         raw = json.loads(line)
-        if raw.get("itemtype") in [10, 54]:
+        if raw.get("itemtype") not in itemtypes:
+            print(raw.get("Name"))
+        itemtypes.add(raw.get("itemtype"))
+        slot_mask = raw.get("slots", 0)
+        if slot_mask != 0:
             # TODO: get is Aug seperate from slot type!
             if raw.get("augtype") == 0:
                 slot_mask = raw.get("slots", 0)
@@ -157,8 +164,9 @@ for line in lines:
             items.append(transformed)
     except json.JSONDecodeError as e:
         print(f"Skipping malformed line: {e}")
-
+print(itemtypes)
 with open("gear_data_full_temp.js", "w", encoding="utf-8") as out_file:
     out_file.write("export default ")
     json.dump(items, out_file, indent=2)
     out_file.write(";")
+    print("total items: {}".format(len(items)))
