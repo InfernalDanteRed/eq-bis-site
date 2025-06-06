@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+/src/data/gear_data_full_temp.js
+/src/data/eq_items_fetched.txt
