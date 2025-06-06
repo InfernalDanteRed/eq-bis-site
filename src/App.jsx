@@ -174,6 +174,8 @@ export default function EQBisPlanner() {
   };
 
   const loadFromHash = () => {
+    skipNextHashLoad.current = true;
+
     const rawHash = window.location.hash.slice(1);
     const params = new URLSearchParams(rawHash);
     const encoded = params.get("build") || rawHash.split("&")[0] || "";
@@ -254,6 +256,10 @@ export default function EQBisPlanner() {
   }, [initialItemIds, gearByItemId]);
 
   useEffect(() => {
+    if (skipNextHashLoad.current) {
+      skipNextHashLoad.current = false;
+      return;
+    }
     if (hashWriteTimer.current) clearTimeout(hashWriteTimer.current);
     hashWriteTimer.current = window.setTimeout(() => {
       skipNextHashLoad.current = true;
