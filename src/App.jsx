@@ -18,6 +18,9 @@ const slotLayout = [
   ["Primary", "Secondary", "Range", "Ammo"],
 ];
 
+const ID_CHAR_LEN = 4;   // 4×6 = 24 bits → up to ~16.7 million
+
+
 const allSlots = slotLayout
   .flatMap((row, rowIndex) =>
     row
@@ -85,6 +88,27 @@ function encode18BitId(id) {
   return BASE64URL_CHARS[c1] + BASE64URL_CHARS[c2] + BASE64URL_CHARS[c3];
 }
 
+// Replace encode18BitId
+function encodeId(id) {
+  // Convert to a 24-bit binary string
+  const bits = id.toString(2).padStart(ID_CHAR_LEN * 6, "0");
+  let out = "";
+  for (let i = 0; i < bits.length; i += 6) {
+    const sextet = parseInt(bits.slice(i, i + 6), 2);
+    out += BASE64URL_CHARS[sextet];
+  }
+  return out;
+}
+
+// Replace decode18BitId
+function decodeId(str) {
+  let bits = "";
+  for (const c of str) {
+    bits += BASE64URL_CHARS.indexOf(c).toString(2).padStart(6, "0");
+  }
+  return parseInt(bits, 2);
+}
+
 function encodeMaskToBase64url(mask) {
   const bytes = [(mask >> 16) & 0xff, (mask >> 8) & 0xff, mask & 0xff];
   return btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -128,6 +152,7 @@ function getItemIconPath(item) {
 export default function EQBisPlanner() {
   const wrapperRef = useRef(null);
   const pickerRef = useRef(null);
+  const isInitializing = useRef(true);
   const [gear, setGear] = useState(defaultGear);
   const [selectedClasses, setSelectedClasses] = useState(["", "", ""]);
   const [activeSlot, setActiveSlot] = useState(null);
@@ -180,8 +205,10 @@ export default function EQBisPlanner() {
 
   const loadFromHash = () => {
     skipNextHashLoad.current = true;
-
+    // we’ve read the shared link, now permit writes
+    isInitializing.current = false;
     const rawHash = window.location.hash.slice(1);
+    console.log("[loadFromHash] rawHash:", rawHash);
     const params = new URLSearchParams(rawHash);
     const encoded = params.get("build") || rawHash.split("&")[0] || "";
     const classString = params.get("classes") || "";
@@ -195,17 +222,21 @@ export default function EQBisPlanner() {
     }
     const parsedItemIds = [];
     const mask = decodeBase64urlMask(maskEncoded);
+    console.log("[loadFromHash] maskEncoded:", maskEncoded);
+    console.log("[loadFromHash] idHexes:", idHexes);
+    console.log("[loadFromHash] chunkBase64:", chunkBase64);
     let hexIndex = 0;
     allSlots.forEach((slotObj, sIndex) => {
       if (mask & (1 << sIndex)) {
-        const idChunk = idHexes.slice(hexIndex, hexIndex + 9);
-        const itemId = decode18BitId(idChunk.slice(0, 3));
-        const aug0Id = decode18BitId(idChunk.slice(3, 6));
-        const aug1Id = decode18BitId(idChunk.slice(6, 9));
+        const len      = ID_CHAR_LEN;
+        const idChunk  = idHexes.slice(hexIndex, hexIndex + len * 3);
+        const itemId   = decodeId(idChunk.slice(0, len));
+        const aug0Id   = decodeId(idChunk.slice(len, len * 2));
+        const aug1Id   = decodeId(idChunk.slice(len * 2, len * 3));
         if (itemId) parsedItemIds.push(itemId);
         if (aug0Id) parsedItemIds.push(aug0Id);
         if (aug1Id) parsedItemIds.push(aug1Id);
-        hexIndex += 9;
+        hexIndex += 12;
       }
     });
     setInitialItemIds(parsedItemIds);
@@ -247,20 +278,26 @@ export default function EQBisPlanner() {
     let hexIndex = 0;
     allSlots.forEach((slotObj, sIndex) => {
       if (mask & (1 << sIndex)) {
-        const idChunk = idHexes.slice(hexIndex, hexIndex + 9);
-        const itemId = decode18BitId(idChunk.slice(0, 3));
-        const aug0Id = decode18BitId(idChunk.slice(3, 6));
-        const aug1Id = decode18BitId(idChunk.slice(6, 9));
+      const len = ID_CHAR_LEN;                        // 4
+      const idChunk = idHexes.slice(hexIndex, hexIndex + len * 3);
+      const itemId  = decodeId(idChunk.slice(0, len));
+      const aug0Id  = decodeId(idChunk.slice(len, len * 2));
+      const aug1Id  = decodeId(idChunk.slice(len * 2, len * 3));
+      hexIndex += len * 3;  
         if (itemId && gearByItemId[itemId]) newGear[slotObj.id] = gearByItemId[itemId];
         if (aug0Id && gearByItemId[aug0Id]) newGear[`${slotObj.id}-aug0`] = gearByItemId[aug0Id];
         if (aug1Id && gearByItemId[aug1Id]) newGear[`${slotObj.id}-aug1`] = gearByItemId[aug1Id];
-        hexIndex += 9;
       }
     });
     setGear(newGear);
+    isInitializing.current = false;
+
   }, [initialItemIds, gearByItemId]);
 
   useEffect(() => {
+    if (isInitializing.current) {
+      return;
+    }
     if (skipNextHashLoad.current) {
       skipNextHashLoad.current = false;
       return;
@@ -277,7 +314,7 @@ export default function EQBisPlanner() {
           const itemId = gear[slotObj.id]?.itemId || 0;
           const aug0Id = gear[`${slotObj.id}-aug0`]?.itemId || 0;
           const aug1Id = gear[`${slotObj.id}-aug1`]?.itemId || 0;
-          encodedIds += encode18BitId(itemId) + encode18BitId(aug0Id) + encode18BitId(aug1Id);
+          encodedIds += encodeId(itemId)   + encodeId(aug0Id)   + encodeId(aug1Id);
         }
       });
       const chunkIdSet = new Set();
