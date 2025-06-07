@@ -164,6 +164,8 @@ export default function EQBisPlanner() {
   const [loadedChunks, setLoadedChunks] = useState({});
   const [initialChunkIds, setInitialChunkIds] = useState([]);
   const [initialItemIds, setInitialItemIds] = useState([]);
+  const [importQueue, setImportQueue] = useState(null);
+
 
   const { chunkFilenameToId, idToChunkFilename } = useMemo(() => {
     const f2i = {};
@@ -176,6 +178,42 @@ export default function EQBisPlanner() {
     });
     return { chunkFilenameToId: f2i, idToChunkFilename: i2f };
   }, []);
+
+   const handleImportFile = (e) => {
+     const file = e.target.files?.[0];
+     if (!file) return;
+     const reader = new FileReader();
+     reader.onload = () => {
+       const lines = reader.result.split(/\r?\n/).filter(Boolean).slice(1);
+      const queue = {};             // slotId → itemId
+      const chunkIds = new Set();
+
+       lines.forEach((line) => {
+         const [loc, name, idStr] = line.split("\t");
+         const id = parseInt(idStr, 10);
+         if (!loc || id <= 0) return;
+
+         const matches = allSlots.filter((s) => s.label === loc);
+         const slot = matches.find((s) => !queue[s.id]);
+         if (!slot) return;
+
+        queue[slot.id] = id;
+
+        // schedule its chunk for fetch
+        const chunk = findChunkForSlotAndSearch(loc.toLowerCase(), /*name not yet known*/ name);
+        // we don’t have the name yet, so instead: once we get gearByItemId we’ll know
+        // but we do know id → we can map later
+        chunkIds.add(chunk.id);
+       });
+
+      // trigger chunk loading
+      setInitialChunkIds(Array.from(chunkIds));
+      // save our slot→id mapping for later
+      setImportQueue(queue);
+     };
+     reader.readAsText(file);
+     e.target.value = "";
+   };
 
   const gearByItemId = useMemo(() => {
     const map = {};
@@ -203,12 +241,52 @@ export default function EQBisPlanner() {
     return null;
   };
 
+     function rebuildHash(currentGear) {
+  // exactly what you have in your writer useEffect:
+  let mask = 0;
+  allSlots.forEach((slotObj, sIndex) => {
+    if (currentGear[slotObj.id]) mask |= 1 << sIndex;
+  });
+  const maskBase64 = encodeMaskToBase64url(mask);
+
+  let encodedIds = "";
+  allSlots.forEach((slotObj, sIndex) => {
+    if (mask & (1 << sIndex)) {
+      const itemId = currentGear[slotObj.id]?.itemId || 0;
+      const aug0Id = currentGear[`${slotObj.id}-aug0`]?.itemId || 0;
+      const aug1Id = currentGear[`${slotObj.id}-aug1`]?.itemId || 0;
+      encodedIds += encodeId(itemId) + encodeId(aug0Id) + encodeId(aug1Id);
+    }
+  });
+
+  // recompute chunkKeys too
+  const chunkIdSet = new Set();
+  allSlots.forEach((slotObj) => {
+    const name = currentGear[slotObj.id]?.ItemName;
+    if (name) {
+      const slotType = slotObj.id.split("-")[0].toLowerCase();
+      const info = findChunkForSlotAndSearch(slotType, name);
+      if (info) chunkIdSet.add(info.id);
+    }
+  });
+  const newChunkKeys = Array.from(chunkIdSet);
+  const chunkBase64 = encodeChunkIdsToBase64url(newChunkKeys);
+
+  const classCode = selectedClasses.map((c) => (c || "00")).join("-");
+  const encoded = maskBase64 + ":" + encodedIds + (chunkBase64 ? ":" + chunkBase64 : "");
+  const newHash = classCode
+    ? `#build=${encoded}&classes=${classCode}`
+    : `#build=${encoded}`;
+
+  window.history.replaceState(null, "", newHash);
+  lastParsedHash.current = newHash;
+}
+
   const loadFromHash = () => {
     skipNextHashLoad.current = true;
     // we’ve read the shared link, now permit writes
     isInitializing.current = false;
     const rawHash = window.location.hash.slice(1);
-    console.log("[loadFromHash] rawHash:", rawHash);
     const params = new URLSearchParams(rawHash);
     const encoded = params.get("build") || rawHash.split("&")[0] || "";
     const classString = params.get("classes") || "";
@@ -222,9 +300,6 @@ export default function EQBisPlanner() {
     }
     const parsedItemIds = [];
     const mask = decodeBase64urlMask(maskEncoded);
-    console.log("[loadFromHash] maskEncoded:", maskEncoded);
-    console.log("[loadFromHash] idHexes:", idHexes);
-    console.log("[loadFromHash] chunkBase64:", chunkBase64);
     let hexIndex = 0;
     allSlots.forEach((slotObj, sIndex) => {
       if (mask & (1 << sIndex)) {
@@ -264,6 +339,32 @@ export default function EQBisPlanner() {
         .catch(() => setLoadedChunks((prev) => ({ ...prev, [filename]: [] })));
     });
   }, [initialChunkIds, idToChunkFilename, loadedChunks]);
+
+useEffect(() => {
+    if (!importQueue) return;
+    const slotIds = Object.keys(importQueue);
+    const allPresent = slotIds.every((slotId) => {
+      const id = importQueue[slotId];
+      return id && gearByItemId[id];
+    });
+    //if (!allPresent) return;
+
+    // build a fresh gear state
+    const newGear = { ...defaultGear };
+    slotIds.forEach((slotId) => {
+      const id = importQueue[slotId];
+      newGear[slotId] = gearByItemId[id];
+    });
+
+   // 1) push it into state
+    setGear(newGear);
+
+   // 2) immediately rebuild the URL hash
+   rebuildHash(newGear);
+
+    // clear the queue so we only import once
+    setImportQueue(null);
+  }, [gearByItemId, importQueue]);
 
   useEffect(() => {
     if (!Array.isArray(initialItemIds) || initialItemIds.length === 0) return;
@@ -383,6 +484,15 @@ export default function EQBisPlanner() {
     <div className="w-full bg-gray-900">
       <div ref={wrapperRef} className="min-h-screen w-full flex flex-col items-center bg-gray-900 text-white p-4 space-y-6">
         <h1 className="text-3xl font-extrabold">THJ Thats My Gear Planner</h1>
+           <label className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded cursor-pointer">
+     Import EQ Export
+     <input
+       type="file"
+       accept=".txt,.tsv"
+      onChange={handleImportFile}
+      className="hidden"
+    />
++   </label>
         <button onClick={() => navigator.clipboard.writeText(window.location.href)} className="px-4 py-2 bg-yellow-300 hover:bg-yellow-400 text-black font-semibold rounded">Copy Build Link</button>
         <button onClick={() => setGear(defaultGear)} className="px-4 py-2 bg-red-400 hover:bg-red-500 text-white font-semibold rounded">Reset Build</button>
         <div className="flex flex-wrap gap-2 justify-center w-full max-w-md">
