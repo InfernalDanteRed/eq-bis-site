@@ -14,7 +14,7 @@ const slotLayout = [
   ["Waist", null, null, "Shoulders"],
   ["Wrist", null, null, "Wrist"],
   ["Legs", "Hands", "Charm", "Feet"],
-  [null, "Finger", "Finger", null],
+  [null, "Fingers", "Fingers", null],
   ["Primary", "Secondary", "Range", "Ammo"],
 ];
 

@@ -11,9 +11,9 @@ SLOT_BITMASK = {
     3: "Face", # 8
     4: "Ear", # 16
     5: "Neck", # 32
-    6: "Back", # 64
+    6: "Shoulders", # 64
     7: "Arms", # 128
-    8: "Shoulders", # 256
+    8: "Back", # 256
     9: "", # 512
     10: "Wrist", # 1024
     11: "Range", # 2048
@@ -21,7 +21,7 @@ SLOT_BITMASK = {
     13: "Primary", # 8192
     14: "Secondary", # 16384
     15: "", # 32768
-    16: "Finger", # 65536
+    16: "Fingers", # 65536
     17: "Chest", # 131072
     18: "Legs", # 262144
     19: "Feet",  # 524288
