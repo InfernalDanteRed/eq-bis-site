@@ -2,6 +2,8 @@ import React, { useMemo, useState, useEffect, useRef } from "react";
 import indexJson from "/public/gear_chunks/v1/index.json";
 import rawSpellMap from "/public/spell_map.json";
 import { Analytics } from '@vercel/analytics/react';
+import { getOrFetchChunk } from './gearChunkCache';
+
 
 const spellMap = Array.isArray(rawSpellMap)
   ? rawSpellMap.reduce((acc, cur) => ({ ...acc, ...cur }), {})
@@ -451,16 +453,12 @@ const findChunkForSlotAndSearch = (slotType, searchText) => {
       const filename = idToChunkFilename[chunkId];
       if (!filename || loadedChunks[filename]) return;
       const safeName = encodeURIComponent(filename);
-      fetch(`/gear_chunks/v1/${safeName}`)
-        .then((res) => {
-          if (!res.ok) throw new Error(`Chunk not found: ${filename}`);
-          return res.json();
-        })
-        .then((itemsArray) => {
-          setLoadedChunks((prev) => ({ ...prev, [filename]: itemsArray }));
-        })
-        .catch(() => setLoadedChunks((prev) => ({ ...prev, [filename]: [] })));
-    });
+      getOrFetchChunk(safeName, `/gear_chunks/${safeName}`)
+      .then((itemsArray) => {
+        setLoadedChunks((prev) => ({ ...prev, [filename]: itemsArray }));
+      })
+      .catch(() => setLoadedChunks((prev) => ({ ...prev, [filename]: [] })));
+        });
   }, [initialChunkIds, idToChunkFilename, loadedChunks]);
 
 useEffect(() => {
