@@ -300,21 +300,37 @@ const handleImportFile = (e) => {
   [gearByItemId]
   );
 
-  const findChunkForSlotAndSearch = (slotType, searchText) => {
-    if (!slotType || searchText.length === 0) return null;
-    const key = searchText.slice(0, 3).toLowerCase();
-    for (const filename of Object.keys(chunkFilenameToId)) {
-      const core = filename.replace(/^v1_chunk_/, "").replace(/\.json$/, "");
-      const parts = core.split("_");
-      if (parts[0] !== slotType) continue;
-      const start = parts[1];
-      const end = parts[2];
-      if (key >= start && key <= end) {
-        return { filename, id: chunkFilenameToId[filename] };
-      }
+const findChunkForSlotAndSearch = (slotType, searchText) => {
+  if (!slotType || !searchText) return null;
+  const key = searchText.slice(0, 3).toLowerCase();
+
+  // 1) build a cleaned list of just this slot's chunks
+  const prefix = `v1_chunk_${slotType}_`;
+  const chunks = Object.entries(chunkFilenameToId)
+    .filter(([filename]) => filename.startsWith(prefix))
+    .map(([filename, id]) => {
+      // tail = "#11_bre_25" or "bri_dar_26" etc
+      const tail = filename.slice(prefix.length, -5); // drop prefix & ".json"
+      const [rawStart = "", rawEnd = ""] = tail.split("_", 2);
+
+      const start = rawStart.replace(/[^a-z]/gi, "").toLowerCase();
+      const end   = rawEnd  .replace(/[^a-z]/gi, "").toLowerCase();
+      return { filename, id, start, end };
+    });
+
+  // 2) exact‐end match (so "bre" will hit your "#11_bre_25" chunk)
+  const exact = chunks.find((c) => c.end === key);
+  if (exact) return { filename: exact.filename, id: exact.id };
+
+  // 3) fallback to range test
+  for (const { filename, id, start, end } of chunks) {
+    if (key >= start && key <= end) {
+      return { filename, id };
     }
-    return null;
-  };
+  }
+
+  return null;
+};
 
      function rebuildHash(currentGear) {
   // exactly what you have in your writer useEffect:
@@ -341,6 +357,7 @@ const handleImportFile = (e) => {
     if (name) {
       const slotType = slotObj.id.split("-")[0].toLowerCase();
       const info = findChunkForSlotAndSearch(slotType, name);
+      console.log("chunk info", info);
       if (info) chunkIdSet.add(info.id);
     }
   });
@@ -407,7 +424,8 @@ const handleImportFile = (e) => {
     initialChunkIds.forEach((chunkId) => {
       const filename = idToChunkFilename[chunkId];
       if (!filename || loadedChunks[filename]) return;
-      fetch(`/gear_chunks/v1/${filename}`)
+      const safeName = encodeURIComponent(filename);
+      fetch(`/gear_chunks/v1/${safeName}`)
         .then((res) => {
           if (!res.ok) throw new Error(`Chunk not found: ${filename}`);
           return res.json();
@@ -546,15 +564,12 @@ useEffect(() => {
     const isAugSlot = activeSlot.endsWith("-aug0") || activeSlot.endsWith("-aug1");
     const slotType = isAugSlot
       ? "aug"
-      : activeSlot.split("-")[0].toLowerCase();    const key = filter.slice(0, 3).toLowerCase();
-    for (const filename of Object.keys(chunkFilenameToId)) {
-      const core = filename.replace(/^v1_chunk_/, "").replace(/\.json$/, "");
-      const [slot, start, end] = core.split("_");
-      if (slot === slotType && key >= start && key <= end) {
-        const chunkId = chunkFilenameToId[filename];
-        if (!initialChunkIds.includes(chunkId)) setInitialChunkIds((p) => [...p, chunkId]);
-        break;
-      }
+      : activeSlot.split("-")[0].toLowerCase(); 
+    // delegate to our centralized, letter-stripped, exact-end-first logic:
+    const info = findChunkForSlotAndSearch(slotType, filter);
+    console.log("info", info);
+    if (info && !initialChunkIds.includes(info.id)) {
+      setInitialChunkIds((p) => [...p, info.id]);
     }
   }, [activeSlot, filter, chunkFilenameToId, initialChunkIds]);
 
