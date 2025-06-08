@@ -215,6 +215,7 @@ const handleImportFile = (e) => {
     const queue    = {};                     // slotId → itemId
     const chunkIds = new Set();
 
+    // Detect classes
     const seenClasses = new Set();
     rawLines.slice(1).forEach((line) => {
       const parts = line.split("\t");
@@ -223,89 +224,69 @@ const handleImportFile = (e) => {
         seenClasses.add(idToClassMap[id]);
       }
     });
-    // take up to 3 unique classes
     const detected = Array.from(seenClasses).slice(0, 3);
     while (detected.length < 3) detected.push("");
     setSelectedClasses(detected);
+
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i].trim();
       if (!line) continue;
-      if (line.startsWith("General")) break;
 
       const parts = line.split("\t");
       if (parts.length < 3) continue;
-      const [loc, name, idStr, ...augParts] = parts;
+
+      const [loc, name, idStr] = parts;
       const mainId = parseInt(idStr, 10);
       if (!loc || isNaN(mainId) || mainId <= 0) continue;
+      if (loc === "General" || loc === "Power Source") continue;
 
-      // —— PRIMARY: queue main + its Primary-SlotX lines only
-      if (loc === "Primary") {
-        const primarySlot = allSlots.find((s) => s.label === "Primary");
-        if (primarySlot) {
-          queue[primarySlot.id] = mainId;
-          const mainChunk = findChunkForSlotAndSearch("primary", name);
-          if (mainChunk?.id) chunkIds.add(mainChunk.id);
+      // Primary is handled as a special slot
+      const baseLoc = loc.includes("-Slot") ? loc.split("-")[0] : loc;
 
-          // collect only the true Primary-Slot lines that immediately follow
-          const augLines = [];
-          let lookAhead = 1;
-          while (
-            i + lookAhead < lines.length &&
-            lines[i + lookAhead].startsWith("Primary-Slot")
-          ) {
-            augLines.push(lines[i + lookAhead]);
-            lookAhead++;
-          }
-
-          // queue each as primary-aug0, primary-aug1, ... up to however many
-          augLines.forEach((augLine, idx) => {
-            const [, augName, augIdStr] = augLine.split("\t");
-            const augId = parseInt(augIdStr, 10);
-            if (!augName || isNaN(augId) || augId <= 0) return;
-
-            const augKey = `${primarySlot.id}-aug${idx}`;
-            queue[augKey] = augId;
-            const augChunk = findChunkForSlotAndSearch("aug", augName);
-            if (augChunk?.id) chunkIds.add(augChunk.id);
-          });
-
-          // skip exactly those lines
-          i += augLines.length;
-        }
-        continue;
-      }
-      // —— EVERY OTHER SLOT (including Secondary) ——
-      // find the next free matching slot
-      const matches = allSlots.filter((s) => s.label === loc);
+      // Find a slot object to target
+      const matches = allSlots.filter((s) => s.label === baseLoc);
       const slot    = matches.find((s) => !queue[s.id]);
       if (!slot) continue;
 
-      // queue main item
+      // Queue base item
       queue[slot.id] = mainId;
-      const mainChunk = findChunkForSlotAndSearch(loc.toLowerCase(), name);
+      const mainChunk = findChunkForSlotAndSearch(baseLoc.toLowerCase(), name);
       if (mainChunk?.id) chunkIds.add(mainChunk.id);
 
-      // queue up to two augs from augParts
-      const augKeys = [`${slot.id}-aug0`, `${slot.id}-aug1`];
-      augKeys.forEach((augKey, j) => {
-        const nameIdx = 2 * j, idIdx = nameIdx + 1;
-        const augName = augParts[nameIdx];
-        const augId   = parseInt(augParts[idIdx], 10);
+      // Look ahead for additional Slot lines
+      let augIndex = 0;
+      let lookahead = 1;
+      while (i + lookahead < lines.length) {
+        const nextLine = lines[i + lookahead].trim();
+        if (!nextLine.startsWith(`${baseLoc}-Slot`)) break;
 
-        // skip “Empty”, purely numeric names, or invalid IDs
+        const augParts = nextLine.split("\t");
+        if (augParts.length < 3) {
+          lookahead++;
+          continue;
+        }
+
+        const [, augName, augIdStr] = augParts;
+        const augId = parseInt(augIdStr, 10);
         const realName = typeof augName === "string"
           && augName.trim() !== ""
           && !/^[0-9]+$/.test(augName)
           && augName.toLowerCase() !== "empty";
-        if (!realName || isNaN(augId) || augId <= 0) return;
 
-        queue[augKey] = augId;
-        const augChunk = findChunkForSlotAndSearch("aug", augName);
-        if (augChunk?.id) chunkIds.add(augChunk.id);
-      });
+        if (augIndex < 2 && realName && !isNaN(augId) && augId > 0) {
+          const augKey = `${slot.id}-aug${augIndex++}`;
+          queue[augKey] = augId;
+          const augChunk = findChunkForSlotAndSearch("aug", augName);
+          if (augChunk?.id) chunkIds.add(augChunk.id);
+        }
+
+        lookahead++;
+      }
+
+      // Skip processed aug lines
+      i += lookahead - 1;
     }
 
-    // trigger chunk loads & save mapping
     setInitialChunkIds(Array.from(chunkIds));
     setImportQueue(queue);
   };
@@ -313,6 +294,10 @@ const handleImportFile = (e) => {
   reader.readAsText(file);
   e.target.value = "";
 };
+
+function safeItemId(item) {
+  return item && typeof item.itemId === "number" && item.itemId > 0 ? item.itemId : 0;
+}
 
   const gearByItemId = useMemo(() => {
     const map = {};
@@ -372,9 +357,9 @@ const findChunkForSlotAndSearch = (slotType, searchText) => {
   let encodedIds = "";
   allSlots.forEach((slotObj, sIndex) => {
     if (mask & (1 << sIndex)) {
-      const itemId = currentGear[slotObj.id]?.itemId || 0;
-      const aug0Id = currentGear[`${slotObj.id}-aug0`]?.itemId || 0;
-      const aug1Id = currentGear[`${slotObj.id}-aug1`]?.itemId || 0;
+      const itemId  = safeItemId(currentGear[slotObj.id]);
+      const aug0Id  = safeItemId(currentGear[`${slotObj.id}-aug0`]);
+      const aug1Id  = safeItemId(currentGear[`${slotObj.id}-aug1`]);
       encodedIds += encodeId(itemId) + encodeId(aug0Id) + encodeId(aug1Id);
     }
   });
@@ -438,6 +423,7 @@ const findChunkForSlotAndSearch = (slotType, searchText) => {
         hexIndex += 12;
       }
     });
+
     setInitialItemIds(parsedItemIds);
   };
 
@@ -453,7 +439,7 @@ const findChunkForSlotAndSearch = (slotType, searchText) => {
       const filename = idToChunkFilename[chunkId];
       if (!filename || loadedChunks[filename]) return;
       const safeName = encodeURIComponent(filename);
-      getOrFetchChunk(safeName, `/gear_chunks/v1/${safeName}`)
+      getOrFetchChunk(safeName, `/gear_chunks/${safeName}`)
       .then((itemsArray) => {
         setLoadedChunks((prev) => ({ ...prev, [filename]: itemsArray }));
       })
@@ -462,15 +448,22 @@ const findChunkForSlotAndSearch = (slotType, searchText) => {
   }, [initialChunkIds, idToChunkFilename, loadedChunks]);
 
 useEffect(() => {
-    if (!importQueue) return;
-    if (
-      initialChunkIds.length > 0 &&
-      Object.keys(loadedChunks).length < initialChunkIds.length
-    ) {
-      return;
-    }
-    const slotIds = Object.keys(importQueue);
-  // 2) Find any slots whose itemId never landed in gearByItemId…
+  if (!importQueue) return;
+
+  const loadedChunkIds = Object.keys(loadedChunks)
+    .map((filename) => chunkFilenameToId[filename])
+    .filter((id) => typeof id === "number");
+
+  const allItemsReady = initialItemIds.every((id) => gearByItemId[id]);
+
+  if (
+    initialChunkIds.length > 0 &&
+    (loadedChunkIds.length < initialChunkIds.length || !allItemsReady)
+  ) {
+    return; // ⛔ wait until chunks are fully loaded and items have populated
+  }
+
+  const slotIds = Object.keys(importQueue);
   const orphaned = slotIds.filter((slotId) => {
     const itemId = importQueue[slotId];
     return itemId && !gearByItemId[itemId];
@@ -478,14 +471,13 @@ useEffect(() => {
 
   if (orphaned.length) {
     console.warn("Pruning slots with no data:", orphaned);
-    // remove them from the queue and bail—effect will re-run if anything remains
     const pruned = { ...importQueue };
     orphaned.forEach((s) => delete pruned[s]);
     setImportQueue(Object.keys(pruned).length ? pruned : null);
     return;
   }
 
-  // 3) All remaining slots are good—build your final gear & hash
+  // All clear: load gear
   const newGear = { ...defaultGear };
   slotIds.forEach((slotId) => {
     const id = importQueue[slotId];
@@ -493,10 +485,8 @@ useEffect(() => {
   });
   setGear(newGear);
   rebuildHash(newGear);
-
-  // 4) Done—clear the queue so we don’t re-import
   setImportQueue(null);
- }, [importQueue, gearByItemId, loadedChunks, initialChunkIds]);
+}, [importQueue, gearByItemId, loadedChunks, initialChunkIds, initialItemIds]);
 
   useEffect(() => {
     if (!Array.isArray(initialItemIds) || initialItemIds.length === 0) return;
@@ -539,9 +529,16 @@ useEffect(() => {
     hashWriteTimer.current = window.setTimeout(() => {
       skipNextHashLoad.current = true;
       let mask = 0;
-      allSlots.forEach((slotObj, sIndex) => { if (gear[slotObj.id]) mask |= 1 << sIndex; });
-      const maskBase64 = encodeMaskToBase64url(mask);
       let encodedIds = "";
+
+      allSlots.forEach((slotObj, sIndex) => { if (gear[slotObj.id]) {
+      mask |= 1 << sIndex;
+      const itemId = gear[slotObj.id]?.itemId || 0;
+      const aug0Id = gear[`${slotObj.id}-aug0`]?.itemId || 0;
+      const aug1Id = gear[`${slotObj.id}-aug1`]?.itemId || 0;
+      encodedIds += encodeId(itemId) + encodeId(aug0Id) + encodeId(aug1Id);
+    } });
+      const maskBase64 = encodeMaskToBase64url(mask);
       allSlots.forEach((slotObj, sIndex) => {
         if (mask & (1 << sIndex)) {
           const itemId = gear[slotObj.id]?.itemId || 0;

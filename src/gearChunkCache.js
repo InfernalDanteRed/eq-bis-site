@@ -13,7 +13,6 @@ export async function getOrFetchChunk(chunkId, fetchUrl) {
   const db = await dbPromise;
   const cached = await db.get(STORE_NAME, chunkId);
   if (cached) {
-    console.log("cached", cached);
     return cached;
   }
   const response = await fetch(fetchUrl);
