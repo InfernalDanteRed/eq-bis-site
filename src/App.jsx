@@ -256,17 +256,24 @@ const handleImportFile = (e) => {
 
       // queue up to two augs
       const augKeys = [`${slot.id}-aug0`, `${slot.id}-aug1`];
-      augKeys.forEach((augKey, j) => {
-        const nameIdx = 2 * j;
-        const idIdx   = nameIdx + 1;
-        const augName = augParts[nameIdx];
-        const augId   = parseInt(augParts[idIdx], 10);
-        if (!augName || isNaN(augId) || augId <= 0) return;
+    augKeys.forEach((augKey, j) => {
+      const nameIdx = 2 * j;
+      const idIdx   = nameIdx + 1;
+      const augName = augParts[nameIdx];
+      const augId   = parseInt(augParts[idIdx], 10);
 
-        queue[augKey] = augId;
-        const augChunk = findChunkForSlotAndSearch("aug", augName);
-        if (augChunk?.id) chunkIds.add(augChunk.id);
-      });
+      const looksLikeRealName =
+        typeof augName === "string" &&
+        augName.trim() !== "" &&
+        !/^[0-9]+$/.test(augName) &&
+        augName.toLowerCase() !== "empty";
+
+      if (!looksLikeRealName || isNaN(augId) || augId <= 0) return;
+
+      queue[augKey] = augId;
+      const augChunk = findChunkForSlotAndSearch("aug", augName);
+      if (augChunk?.id) chunkIds.add(augChunk.id);
+    });
     }
 
     // kick off chunk loads & store our slot→id map
@@ -414,29 +421,40 @@ const handleImportFile = (e) => {
 
 useEffect(() => {
     if (!importQueue) return;
+    if (
+      initialChunkIds.length > 0 &&
+      Object.keys(loadedChunks).length < initialChunkIds.length
+    ) {
+      return;
+    }
     const slotIds = Object.keys(importQueue);
-    const allPresent = slotIds.every((slotId) => {
-      const id = importQueue[slotId];
-      return id && gearByItemId[id];
-    });
-    //if (!allPresent) return;
+  // 2) Find any slots whose itemId never landed in gearByItemId…
+  const orphaned = slotIds.filter((slotId) => {
+    const itemId = importQueue[slotId];
+    return itemId && !gearByItemId[itemId];
+  });
 
-    // build a fresh gear state
-    const newGear = { ...defaultGear };
-    slotIds.forEach((slotId) => {
-      const id = importQueue[slotId];
-      newGear[slotId] = gearByItemId[id];
-    });
+  if (orphaned.length) {
+    console.warn("Pruning slots with no data:", orphaned);
+    // remove them from the queue and bail—effect will re-run if anything remains
+    const pruned = { ...importQueue };
+    orphaned.forEach((s) => delete pruned[s]);
+    setImportQueue(Object.keys(pruned).length ? pruned : null);
+    return;
+  }
 
-   // 1) push it into state
-    setGear(newGear);
+  // 3) All remaining slots are good—build your final gear & hash
+  const newGear = { ...defaultGear };
+  slotIds.forEach((slotId) => {
+    const id = importQueue[slotId];
+    newGear[slotId] = gearByItemId[id];
+  });
+  setGear(newGear);
+  rebuildHash(newGear);
 
-   // 2) immediately rebuild the URL hash
-   rebuildHash(newGear);
-
-    // clear the queue so we only import once
-    setImportQueue(null);
-  }, [gearByItemId, importQueue]);
+  // 4) Done—clear the queue so we don’t re-import
+  setImportQueue(null);
+ }, [importQueue, gearByItemId, loadedChunks, initialChunkIds]);
 
   useEffect(() => {
     if (!Array.isArray(initialItemIds) || initialItemIds.length === 0) return;

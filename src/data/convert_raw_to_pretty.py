@@ -3,6 +3,7 @@ import json
 def get_stat(item, key):
     return item.get(key) if item.get(key) != 0 else None
 
+
 # Hypothetical slot bit-to-name mapping (just a placeholder — you can adjust these)
 SLOT_BITMASK = {
     0: "Charm", # 1
@@ -52,6 +53,7 @@ SLOT_CLASSES = {
 }
 
 itemtypes = set()
+spell_id_list = set()
 
 def parse_slot_types(slot_mask):
     slots = []
@@ -148,10 +150,10 @@ for line in lines:
                 "BashMod": None,
                 "BackstabMod": get_stat(raw, "backstabdmg"),
                 "FrenzyMod": None,
-                "FocusEffectOrSkillMod": raw.get("focusname") or None,
+                #"FocusEffectOrSkillMod": raw.get("focusname") or None,
                 "FocusEffectId": raw.get("focuseffect") or None,
-                "ClickyEffect": raw.get("clickname") or None,
-                "WeaponProc": raw.get("procname") or None,
+                "ClickyEffect": raw.get("clickeffect") or None,
+                "WeaponProc": raw.get("proceffect") or None,
                 "ProcMod": None,
                 "CLASSES": class_names,
                 "AugSlot": None,
@@ -162,6 +164,10 @@ for line in lines:
                 "iconId": raw.get("icon"),
             }
             items.append(transformed)
+            spell_id_list.add(raw.get("focuseffect"))
+            spell_id_list.add(raw.get("clickeffect"))
+            spell_id_list.add(raw.get("proceffect"))
+
     except json.JSONDecodeError as e:
         print(f"Skipping malformed line: {e}")
 print(itemtypes)
@@ -170,3 +176,7 @@ with open("gear_data_full_temp.js", "w", encoding="utf-8") as out_file:
     json.dump(items, out_file, indent=2)
     out_file.write(";")
     print("total items: {}".format(len(items)))
+    print(spell_id_list)
+
+with open("spell_id_list.txt", "w", encoding="utf-8") as spell_out_file:
+    spell_out_file.write(str(spell_id_list))
