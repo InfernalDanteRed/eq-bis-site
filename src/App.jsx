@@ -179,6 +179,29 @@ export default function EQBisPlanner() {
     return { chunkFilenameToId: f2i, idToChunkFilename: i2f };
   }, []);
 
+
+  // assume this exists somewhere above:
+const idToClassMap = {
+  2035001: "WAR",
+  2035002: "CLR",
+  2035003: "CLR",
+  2035004: "RNG",
+  2035005: "SHD",
+  2035006: "DRU",
+  2035007: "MNK",
+  2035008: "BRD",
+  2035009: "ROG",
+  2035010: "SHM",
+  2035011: "NEC",
+  2035012: "WIZ",
+  2035013: "MAG",
+  2035014: "ENC",
+  2035015: "BST",
+  2035016: "BER",
+
+  // …etc
+};
+
 const handleImportFile = (e) => {
   const file = e.target.files?.[0];
   if (!file) return;
@@ -190,6 +213,18 @@ const handleImportFile = (e) => {
     const queue    = {};                     // slotId → itemId
     const chunkIds = new Set();
 
+    const seenClasses = new Set();
+    rawLines.slice(1).forEach((line) => {
+      const parts = line.split("\t");
+      const id = parseInt(parts[2], 10);
+      if (idToClassMap[id]) {
+        seenClasses.add(idToClassMap[id]);
+      }
+    });
+    // take up to 3 unique classes
+    const detected = Array.from(seenClasses).slice(0, 3);
+    while (detected.length < 3) detected.push("");
+    setSelectedClasses(detected);
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i].trim();
       if (!line) continue;
