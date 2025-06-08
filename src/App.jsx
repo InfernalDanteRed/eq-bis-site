@@ -453,7 +453,7 @@ const findChunkForSlotAndSearch = (slotType, searchText) => {
       const filename = idToChunkFilename[chunkId];
       if (!filename || loadedChunks[filename]) return;
       const safeName = encodeURIComponent(filename);
-      getOrFetchChunk(safeName, `/gear_chunks/${safeName}`)
+      getOrFetchChunk(safeName, `/gear_chunks/v1/${safeName}`)
       .then((itemsArray) => {
         setLoadedChunks((prev) => ({ ...prev, [filename]: itemsArray }));
       })
