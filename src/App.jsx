@@ -186,14 +186,14 @@ const handleImportFile = (e) => {
   const reader = new FileReader();
   reader.onload = () => {
     const rawLines = reader.result.split(/\r?\n/);
-    const lines    = rawLines.slice(1);      // skip header line
+    const lines    = rawLines.slice(1);      // skip header
     const queue    = {};                     // slotId → itemId
     const chunkIds = new Set();
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i].trim();
       if (!line) continue;
-      if (line.startsWith("General")) break;  // stop on “General…”
+      if (line.startsWith("General")) break;
 
       const parts = line.split("\t");
       if (parts.length < 3) continue;
@@ -201,50 +201,44 @@ const handleImportFile = (e) => {
       const mainId = parseInt(idStr, 10);
       if (!loc || isNaN(mainId) || mainId <= 0) continue;
 
-      // —— PRIMARY SPECIAL CASE ——
+      // —— PRIMARY: queue main + its Primary-SlotX lines only
       if (loc === "Primary") {
         const primarySlot = allSlots.find((s) => s.label === "Primary");
         if (primarySlot) {
-          // 1) queue the main staff
           queue[primarySlot.id] = mainId;
           const mainChunk = findChunkForSlotAndSearch("primary", name);
           if (mainChunk?.id) chunkIds.add(mainChunk.id);
 
-          // 2) read next 4 lines of aug data
-          const augLines = lines.slice(i + 1, i + 5);
-          augLines.forEach((augLine, j) => {
-            const [_, augName, augIdStr] = augLine.split("\t");
+          // collect only the true Primary-Slot lines that immediately follow
+          const augLines = [];
+          let lookAhead = 1;
+          while (
+            i + lookAhead < lines.length &&
+            lines[i + lookAhead].startsWith("Primary-Slot")
+          ) {
+            augLines.push(lines[i + lookAhead]);
+            lookAhead++;
+          }
+
+          // queue each as primary-aug0, primary-aug1, ... up to however many
+          augLines.forEach((augLine, idx) => {
+            const [, augName, augIdStr] = augLine.split("\t");
             const augId = parseInt(augIdStr, 10);
             if (!augName || isNaN(augId) || augId <= 0) return;
 
-            // map j → aug slot
-            let targetSlotId;
-            if (j < 2) {
-              // first two augs go on Primary-aug0/1
-              targetSlotId = `${primarySlot.id}-aug${j}`;
-            } else {
-              // last two go on Secondary-aug0/1 in same row
-              const [, row] = primarySlot.id.split("-");
-              const secondarySlot = allSlots.find(
-                (s) => s.label === "Secondary" && s.id.split("-")[1] === row
-              );
-              if (!secondarySlot) return;
-              targetSlotId = `${secondarySlot.id}-aug${j - 2}`;
-            }
-
-            queue[targetSlotId] = augId;
+            const augKey = `${primarySlot.id}-aug${idx}`;
+            queue[augKey] = augId;
             const augChunk = findChunkForSlotAndSearch("aug", augName);
             if (augChunk?.id) chunkIds.add(augChunk.id);
           });
-        }
 
-        // skip over those 4 lines in the main loop
-        i += 4;
+          // skip exactly those lines
+          i += augLines.length;
+        }
         continue;
       }
-
-      // —— NON‐PRIMARY SLOTS —— 
-      // find the next free slot matching this loc
+      // —— EVERY OTHER SLOT (including Secondary) ——
+      // find the next free matching slot
       const matches = allSlots.filter((s) => s.label === loc);
       const slot    = matches.find((s) => !queue[s.id]);
       if (!slot) continue;
@@ -254,29 +248,27 @@ const handleImportFile = (e) => {
       const mainChunk = findChunkForSlotAndSearch(loc.toLowerCase(), name);
       if (mainChunk?.id) chunkIds.add(mainChunk.id);
 
-      // queue up to two augs
+      // queue up to two augs from augParts
       const augKeys = [`${slot.id}-aug0`, `${slot.id}-aug1`];
-    augKeys.forEach((augKey, j) => {
-      const nameIdx = 2 * j;
-      const idIdx   = nameIdx + 1;
-      const augName = augParts[nameIdx];
-      const augId   = parseInt(augParts[idIdx], 10);
+      augKeys.forEach((augKey, j) => {
+        const nameIdx = 2 * j, idIdx = nameIdx + 1;
+        const augName = augParts[nameIdx];
+        const augId   = parseInt(augParts[idIdx], 10);
 
-      const looksLikeRealName =
-        typeof augName === "string" &&
-        augName.trim() !== "" &&
-        !/^[0-9]+$/.test(augName) &&
-        augName.toLowerCase() !== "empty";
+        // skip “Empty”, purely numeric names, or invalid IDs
+        const realName = typeof augName === "string"
+          && augName.trim() !== ""
+          && !/^[0-9]+$/.test(augName)
+          && augName.toLowerCase() !== "empty";
+        if (!realName || isNaN(augId) || augId <= 0) return;
 
-      if (!looksLikeRealName || isNaN(augId) || augId <= 0) return;
-
-      queue[augKey] = augId;
-      const augChunk = findChunkForSlotAndSearch("aug", augName);
-      if (augChunk?.id) chunkIds.add(augChunk.id);
-    });
+        queue[augKey] = augId;
+        const augChunk = findChunkForSlotAndSearch("aug", augName);
+        if (augChunk?.id) chunkIds.add(augChunk.id);
+      });
     }
 
-    // kick off chunk loads & store our slot→id map
+    // trigger chunk loads & save mapping
     setInitialChunkIds(Array.from(chunkIds));
     setImportQueue(queue);
   };
@@ -357,7 +349,6 @@ const findChunkForSlotAndSearch = (slotType, searchText) => {
     if (name) {
       const slotType = slotObj.id.split("-")[0].toLowerCase();
       const info = findChunkForSlotAndSearch(slotType, name);
-      console.log("chunk info", info);
       if (info) chunkIdSet.add(info.id);
     }
   });
@@ -567,7 +558,6 @@ useEffect(() => {
       : activeSlot.split("-")[0].toLowerCase(); 
     // delegate to our centralized, letter-stripped, exact-end-first logic:
     const info = findChunkForSlotAndSearch(slotType, filter);
-    console.log("info", info);
     if (info && !initialChunkIds.includes(info.id)) {
       setInitialChunkIds((p) => [...p, info.id]);
     }
