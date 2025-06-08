@@ -179,41 +179,104 @@ export default function EQBisPlanner() {
     return { chunkFilenameToId: f2i, idToChunkFilename: i2f };
   }, []);
 
-   const handleImportFile = (e) => {
-     const file = e.target.files?.[0];
-     if (!file) return;
-     const reader = new FileReader();
-     reader.onload = () => {
-       const lines = reader.result.split(/\r?\n/).filter(Boolean).slice(1);
-      const queue = {};             // slotId → itemId
-      const chunkIds = new Set();
+const handleImportFile = (e) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
 
-       lines.forEach((line) => {
-         const [loc, name, idStr] = line.split("\t");
-         const id = parseInt(idStr, 10);
-         if (!loc || id <= 0) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    const rawLines = reader.result.split(/\r?\n/);
+    const lines    = rawLines.slice(1);      // skip header line
+    const queue    = {};                     // slotId → itemId
+    const chunkIds = new Set();
 
-         const matches = allSlots.filter((s) => s.label === loc);
-         const slot = matches.find((s) => !queue[s.id]);
-         if (!slot) return;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line) continue;
+      if (line.startsWith("General")) break;  // stop on “General…”
 
-        queue[slot.id] = id;
+      const parts = line.split("\t");
+      if (parts.length < 3) continue;
+      const [loc, name, idStr, ...augParts] = parts;
+      const mainId = parseInt(idStr, 10);
+      if (!loc || isNaN(mainId) || mainId <= 0) continue;
 
-        // schedule its chunk for fetch
-        const chunk = findChunkForSlotAndSearch(loc.toLowerCase(), /*name not yet known*/ name);
-        // we don’t have the name yet, so instead: once we get gearByItemId we’ll know
-        // but we do know id → we can map later
-        chunkIds.add(chunk.id);
-       });
+      // —— PRIMARY SPECIAL CASE ——
+      if (loc === "Primary") {
+        const primarySlot = allSlots.find((s) => s.label === "Primary");
+        if (primarySlot) {
+          // 1) queue the main staff
+          queue[primarySlot.id] = mainId;
+          const mainChunk = findChunkForSlotAndSearch("primary", name);
+          if (mainChunk?.id) chunkIds.add(mainChunk.id);
 
-      // trigger chunk loading
-      setInitialChunkIds(Array.from(chunkIds));
-      // save our slot→id mapping for later
-      setImportQueue(queue);
-     };
-     reader.readAsText(file);
-     e.target.value = "";
-   };
+          // 2) read next 4 lines of aug data
+          const augLines = lines.slice(i + 1, i + 5);
+          augLines.forEach((augLine, j) => {
+            const [_, augName, augIdStr] = augLine.split("\t");
+            const augId = parseInt(augIdStr, 10);
+            if (!augName || isNaN(augId) || augId <= 0) return;
+
+            // map j → aug slot
+            let targetSlotId;
+            if (j < 2) {
+              // first two augs go on Primary-aug0/1
+              targetSlotId = `${primarySlot.id}-aug${j}`;
+            } else {
+              // last two go on Secondary-aug0/1 in same row
+              const [, row] = primarySlot.id.split("-");
+              const secondarySlot = allSlots.find(
+                (s) => s.label === "Secondary" && s.id.split("-")[1] === row
+              );
+              if (!secondarySlot) return;
+              targetSlotId = `${secondarySlot.id}-aug${j - 2}`;
+            }
+
+            queue[targetSlotId] = augId;
+            const augChunk = findChunkForSlotAndSearch("aug", augName);
+            if (augChunk?.id) chunkIds.add(augChunk.id);
+          });
+        }
+
+        // skip over those 4 lines in the main loop
+        i += 4;
+        continue;
+      }
+
+      // —— NON‐PRIMARY SLOTS —— 
+      // find the next free slot matching this loc
+      const matches = allSlots.filter((s) => s.label === loc);
+      const slot    = matches.find((s) => !queue[s.id]);
+      if (!slot) continue;
+
+      // queue main item
+      queue[slot.id] = mainId;
+      const mainChunk = findChunkForSlotAndSearch(loc.toLowerCase(), name);
+      if (mainChunk?.id) chunkIds.add(mainChunk.id);
+
+      // queue up to two augs
+      const augKeys = [`${slot.id}-aug0`, `${slot.id}-aug1`];
+      augKeys.forEach((augKey, j) => {
+        const nameIdx = 2 * j;
+        const idIdx   = nameIdx + 1;
+        const augName = augParts[nameIdx];
+        const augId   = parseInt(augParts[idIdx], 10);
+        if (!augName || isNaN(augId) || augId <= 0) return;
+
+        queue[augKey] = augId;
+        const augChunk = findChunkForSlotAndSearch("aug", augName);
+        if (augChunk?.id) chunkIds.add(augChunk.id);
+      });
+    }
+
+    // kick off chunk loads & store our slot→id map
+    setInitialChunkIds(Array.from(chunkIds));
+    setImportQueue(queue);
+  };
+
+  reader.readAsText(file);
+  e.target.value = "";
+};
 
   const gearByItemId = useMemo(() => {
     const map = {};
@@ -224,6 +287,11 @@ export default function EQBisPlanner() {
     });
     return map;
   }, [loadedChunks]);
+
+  const availableAugs = useMemo(
+  () => Object.values(gearByItemId).filter((item) => item.SlotType === "Aug"),
+  [gearByItemId]
+  );
 
   const findChunkForSlotAndSearch = (slotType, searchText) => {
     if (!slotType || searchText.length === 0) return null;
@@ -281,6 +349,10 @@ export default function EQBisPlanner() {
   window.history.replaceState(null, "", newHash);
   lastParsedHash.current = newHash;
 }
+  function handleReset() {
+    setGear(defaultGear);
+    setSelectedClasses(["", "", ""]);
+  }
 
   const loadFromHash = () => {
     skipNextHashLoad.current = true;
@@ -452,8 +524,11 @@ useEffect(() => {
 
   useEffect(() => {
     if (!activeSlot || filter.length < 3) return;
-    const slotType = activeSlot.split("-")[0].toLowerCase();
-    const key = filter.slice(0, 3).toLowerCase();
+  // if we're on an aug slot, force slotType = "aug"
+    const isAugSlot = activeSlot.endsWith("-aug0") || activeSlot.endsWith("-aug1");
+    const slotType = isAugSlot
+      ? "aug"
+      : activeSlot.split("-")[0].toLowerCase();    const key = filter.slice(0, 3).toLowerCase();
     for (const filename of Object.keys(chunkFilenameToId)) {
       const core = filename.replace(/^v1_chunk_/, "").replace(/\.json$/, "");
       const [slot, start, end] = core.split("_");
@@ -464,6 +539,25 @@ useEffect(() => {
       }
     }
   }, [activeSlot, filter, chunkFilenameToId, initialChunkIds]);
+
+  useEffect(() => {
+  function handleClickOutside(e) {
+    // grab all open dropdowns (your item + aug lists both have z-50)
+    const dropdowns = document.querySelectorAll(".z-50");
+    const clickedInsideAny = Array.from(dropdowns).some(dd =>
+      dd.contains(e.target)
+    );
+    if (!clickedInsideAny) {
+      // close whatever was open…
+      setActiveSlot(null);
+      // …and clear the search box
+      setFilter("");
+    }
+  }
+
+  document.addEventListener("mousedown", handleClickOutside);
+  return () => document.removeEventListener("mousedown", handleClickOutside);
+}, []);
 
   const handleSlotClick = (slot) => { setTimeout(() => { setActiveSlot(slot); setFilter(""); }, 0); };
   const handleItemSelect = (slot, item) => { setGear((p) => ({ ...p, [slot]: item })); setActiveSlot(null); setFilter(""); };
@@ -484,17 +578,29 @@ useEffect(() => {
     <div className="w-full bg-gray-900">
       <div ref={wrapperRef} className="min-h-screen w-full flex flex-col items-center bg-gray-900 text-white p-4 space-y-6">
         <h1 className="text-3xl font-extrabold">THJ Thats My Gear Planner</h1>
-           <label className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded cursor-pointer">
-     Import EQ Export
-     <input
-       type="file"
-       accept=".txt,.tsv"
-      onChange={handleImportFile}
-      className="hidden"
-    />
-+   </label>
-        <button onClick={() => navigator.clipboard.writeText(window.location.href)} className="px-4 py-2 bg-yellow-300 hover:bg-yellow-400 text-black font-semibold rounded">Copy Build Link</button>
-        <button onClick={() => setGear(defaultGear)} className="px-4 py-2 bg-red-400 hover:bg-red-500 text-white font-semibold rounded">Reset Build</button>
+           <div className="flex flex-wrap items-center gap-2 justify-center">
+            <label className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded cursor-pointer">
+              Import Inventory Data
+              <input
+                type="file"
+                accept=".txt,.tsv"
+                onChange={handleImportFile}
+                className="hidden"
+              />
+            </label>
+            <button
+              onClick={() => navigator.clipboard.writeText(window.location.href)}
+              className="px-4 py-2 bg-yellow-300 hover:bg-yellow-400 text-black font-semibold rounded"
+            >
+              Copy Build Link
+            </button>
+            <button
+              onClick={handleReset}
+              className="px-4 py-2 bg-red-400 hover:bg-red-500 text-white font-semibold rounded"
+            >
+              Reset Build
+            </button>
+        </div>      
         <div className="flex flex-wrap gap-2 justify-center w-full max-w-md">
           {selectedClasses.map((cls, idx) => (
             <select key={idx} value={cls} onChange={(e) => handleClassChange(idx, e.target.value)} className="px-4 py-2 bg-gray-800 border border-yellow-300 rounded text-white">
@@ -583,13 +689,19 @@ useEffect(() => {
                       )}
                       {gear[`${id}-aug${i}`] && <button className="ml-1 text-red-400 text-xs hover:text-red-600" onClick={() => handleItemSelect(`${id}-aug${i}`, null)}>✖</button>}
                       {activeSlot === `${id}-aug${i}` && (
-                        <div className="absolute z-50 top-full left-0 mt-1 w-48 bg-gray-800 border border-yellow-300 rounded shadow-lg">
+                        <div
+                          ref={pickerRef}
+                          className="absolute z-50 top-full left-0 mt-1 w-48 bg-gray-800 border border-gray-600 rounded shadow-lg"
+                        >
                           <input type="text" value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Search augs..." className="w-full p-1 text-sm bg-gray-700 text-white border-b border-yellow-300" />
                           <div className="max-h-48 overflow-y-auto">
-                            {gearData.filter((item) => item.SlotType === "Aug" && item.ItemName.toLowerCase().includes(filter.toLowerCase())).slice(0, 8).map((item, idx) => (
+                             {availableAugs
+                              .filter(item => item.ItemName.toLowerCase().includes(filter.toLowerCase()))
+                              .slice(0, 8)
+                              .map((item, idx) => (
                               <div key={idx} className="px-2 py-1 hover:bg-yellow-600 cursor-pointer" onClick={() => handleItemSelect(`${id}-aug${i}`, item)}>{item.ItemName}</div>
                             ))}
-                            {gearData.filter((item) => item.SlotType === "Aug" && item.ItemName.toLowerCase().includes(filter.toLowerCase())).length === 0 && <div className="px-2 py-1 text-gray-400 text-sm">No matches</div>}
+                            {availableAugs.filter((item) => item.SlotType === "Aug" && item.ItemName.toLowerCase().includes(filter.toLowerCase())).length === 0 && <div className="px-2 py-1 text-gray-400 text-sm">No matches</div>}
                           </div>
                         </div>
                       )}
@@ -610,7 +722,10 @@ useEffect(() => {
                         {gear[`${slot}-${rowIndex}-${colIndex}`] && <button className="absolute top-0 right-0 m-1 text-red-400 text-xs hover:text-red-600" onClick={(e) => { e.stopPropagation(); handleItemSelect(`${slot}-${rowIndex}-${colIndex}`, null); }}>✖</button>}
                       </div>
                       {activeSlot === `${slot}-${rowIndex}-${colIndex}` && (
-                        <div className="absolute top-full mt-1 w-48 bg-gray-800 border border-yellow-300 rounded shadow-lg z-50">
+                        <div
+                          ref={pickerRef}
+                          className="absolute top-full mt-1 w-48 bg-gray-800 border border-gray-600 rounded shadow-lg z-50"
+                        >
                           <input type="text" value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Search items..." className="w-full p-1 text-sm bg-gray-700 text-white border-b border-yellow-300" />
                           <div className="max-h-48 overflow-y-auto">
                             {filteredGearData.slice(0, 8).map((item, idx) => (
