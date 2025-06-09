@@ -346,7 +346,7 @@ const findChunkForSlotAndSearch = (slotType, searchText) => {
   return null;
 };
 
-     function rebuildHash(currentGear) {
+function rebuildHash(currentGear) {
   // exactly what you have in your writer useEffect:
   let mask = 0;
   allSlots.forEach((slotObj, sIndex) => {
@@ -374,6 +374,17 @@ const findChunkForSlotAndSearch = (slotType, searchText) => {
       if (info) chunkIdSet.add(info.id);
     }
   });
+
+    allSlots.forEach(slotObj => {
+    ["-aug0", "-aug1"].forEach(suf => {
+      const augName = currentGear[slotObj.id + suf]?.ItemName;
+      if (augName) {
+        const info = findChunkForSlotAndSearch("aug", augName);
+        if (info) chunkIdSet.add(info.id);
+      }
+    });
+  });
+
   const newChunkKeys = Array.from(chunkIdSet);
   const chunkBase64 = encodeChunkIdsToBase64url(newChunkKeys);
 
@@ -391,41 +402,61 @@ const findChunkForSlotAndSearch = (slotType, searchText) => {
     setSelectedClasses(["", "", ""]);
   }
 
-  const loadFromHash = () => {
-    skipNextHashLoad.current = true;
-    // we’ve read the shared link, now permit writes
-    isInitializing.current = false;
-    const rawHash = window.location.hash.slice(1);
-    const params = new URLSearchParams(rawHash);
-    const encoded = params.get("build") || rawHash.split("&")[0] || "";
-    const classString = params.get("classes") || "";
-    if (classString) setSelectedClasses(classString.split("-"));
-    if (encoded.length < 4) return;
-    const [maskEncoded, idHexes, chunkBase64] = encoded.split(":");
-    if (!maskEncoded || !idHexes) return;
-    if (chunkBase64) {
-      const parsedChunkIds = decodeChunkIdsFromBase64url(chunkBase64);
-      setInitialChunkIds(Array.isArray(parsedChunkIds) ? parsedChunkIds : []);
-    }
-    const parsedItemIds = [];
-    const mask = decodeBase64urlMask(maskEncoded);
-    let hexIndex = 0;
-    allSlots.forEach((slotObj, sIndex) => {
-      if (mask & (1 << sIndex)) {
-        const len      = ID_CHAR_LEN;
-        const idChunk  = idHexes.slice(hexIndex, hexIndex + len * 3);
-        const itemId   = decodeId(idChunk.slice(0, len));
-        const aug0Id   = decodeId(idChunk.slice(len, len * 2));
-        const aug1Id   = decodeId(idChunk.slice(len * 2, len * 3));
-        if (itemId) parsedItemIds.push(itemId);
-        if (aug0Id) parsedItemIds.push(aug0Id);
-        if (aug1Id) parsedItemIds.push(aug1Id);
-        hexIndex += 12;
-      }
-    });
+const loadFromHash = () => {
+  // Prevent the writer from immediately overwriting
+  skipNextHashLoad.current = true;
+  isInitializing.current = false;
 
-    setInitialItemIds(parsedItemIds);
-  };
+  // Remember “this” hash so rebuildHash skips it
+  lastParsedHash.current = window.location.hash;
+
+  const rawHash     = window.location.hash.slice(1);
+  const params      = new URLSearchParams(rawHash);
+  const encoded     = params.get("build")    || rawHash.split("&")[0] || "";
+  const classString = params.get("classes")  || "";
+
+  if (classString) {
+    setSelectedClasses(classString.split("-"));
+  }
+
+  if (encoded.length < ID_CHAR_LEN) {
+    // nothing to do
+    return;
+  }
+
+  const [ maskEncoded, idHexes, chunkBase64 ] = encoded.split(":");
+  if (chunkBase64) {
+    // decode _all_ the chunk IDs (main + any aug chunks)
+    const parsedChunkIds = decodeChunkIdsFromBase64url(chunkBase64);
+    setInitialChunkIds(Array.isArray(parsedChunkIds)
+      ? parsedChunkIds
+      : []);
+  }
+
+  // decode item IDs (main + augs)
+  const mask = decodeBase64urlMask(maskEncoded);
+  const parsedItemIds = [];
+  let hexIndex = 0;
+
+  allSlots.forEach((slotObj, sIndex) => {
+    if (mask & (1 << sIndex)) {
+      const len      = ID_CHAR_LEN;
+      const idChunk  = idHexes.slice(hexIndex, hexIndex + len * 3);
+
+      const mainId = decodeId(idChunk.slice(0, len));
+      const a0     = decodeId(idChunk.slice(len,     len * 2));
+      const a1     = decodeId(idChunk.slice(len * 2, len * 3));
+
+      if (mainId) parsedItemIds.push(mainId);
+      if (a0)     parsedItemIds.push(a0);
+      if (a1)     parsedItemIds.push(a1);
+
+      hexIndex += len * 3;
+    }
+  });
+
+  setInitialItemIds(parsedItemIds);
+};
 
   useEffect(() => {
     loadFromHash();
@@ -433,19 +464,24 @@ const findChunkForSlotAndSearch = (slotType, searchText) => {
     return () => window.removeEventListener("hashchange", loadFromHash);
   }, []);
 
-  useEffect(() => {
-    if (!Array.isArray(initialChunkIds)) return;
-    initialChunkIds.forEach((chunkId) => {
-      const filename = idToChunkFilename[chunkId];
-      if (!filename || loadedChunks[filename]) return;
-      const safeName = encodeURIComponent(filename);
-      getOrFetchChunk(safeName, `/gear_chunks/v1/${safeName}`)
-      .then((itemsArray) => {
-        setLoadedChunks((prev) => ({ ...prev, [filename]: itemsArray }));
+useEffect(() => {
+  if (!initialChunkIds || initialChunkIds.length === 0) return;
+
+  initialChunkIds.forEach((chunkId) => {
+    const filename = idToChunkFilename[chunkId];
+    // only fetch if we haven’t already
+    if (!filename || loadedChunks[filename]) return;
+
+    // filename already includes “.json”
+    getOrFetchChunk(filename, `/gear_chunks/v1/${filename}`)
+      .then(itemsArray => {
+        setLoadedChunks(prev => ({ ...prev, [filename]: itemsArray }));
       })
-      .catch(() => setLoadedChunks((prev) => ({ ...prev, [filename]: [] })));
-        });
-  }, [initialChunkIds, idToChunkFilename, loadedChunks]);
+      .catch(() => {
+        setLoadedChunks(prev => ({ ...prev, [filename]: [] }));
+      });
+  });
+}, [initialChunkIds, idToChunkFilename, loadedChunks]);
 
 useEffect(() => {
   if (!importQueue) return;
@@ -488,96 +524,42 @@ useEffect(() => {
   setImportQueue(null);
 }, [importQueue, gearByItemId, loadedChunks, initialChunkIds, initialItemIds]);
 
-  useEffect(() => {
-    if (!Array.isArray(initialItemIds) || initialItemIds.length === 0) return;
-    const allPresent = initialItemIds.every((id) => gearByItemId[id]);
-    if (!allPresent) return;
-    const rawHash = window.location.hash.slice(1);
-    const params = new URLSearchParams(rawHash);
-    const encoded = params.get("build") || rawHash.split("&")[0] || "";
-    const [maskEncoded, idHexes] = encoded.split(":");
-    const mask = decodeBase64urlMask(maskEncoded);
-    const newGear = {};
-    let hexIndex = 0;
-    allSlots.forEach((slotObj, sIndex) => {
-      if (mask & (1 << sIndex)) {
-      const len = ID_CHAR_LEN;                        // 4
-      const idChunk = idHexes.slice(hexIndex, hexIndex + len * 3);
-      const itemId  = decodeId(idChunk.slice(0, len));
-      const aug0Id  = decodeId(idChunk.slice(len, len * 2));
-      const aug1Id  = decodeId(idChunk.slice(len * 2, len * 3));
-      hexIndex += len * 3;  
-        if (itemId && gearByItemId[itemId]) newGear[slotObj.id] = gearByItemId[itemId];
-        if (aug0Id && gearByItemId[aug0Id]) newGear[`${slotObj.id}-aug0`] = gearByItemId[aug0Id];
-        if (aug1Id && gearByItemId[aug1Id]) newGear[`${slotObj.id}-aug1`] = gearByItemId[aug1Id];
-      }
-    });
-    setGear(newGear);
-    isInitializing.current = false;
+useEffect(() => {
+  if (!Array.isArray(initialItemIds) || initialItemIds.length === 0) return;
+  const allPresent = initialItemIds.every((id) => gearByItemId[id]);
+  if (!allPresent) return;
 
-  }, [initialItemIds, gearByItemId]);
+  const rawHash = window.location.hash.slice(1);
+  const params  = new URLSearchParams(rawHash);
+  const [maskEncoded, idHexes] = (params.get("build") || rawHash).split(":");
+  const mask = decodeBase64urlMask(maskEncoded);
 
-  useEffect(() => {
-    if (isInitializing.current) {
-      return;
+  let hexIndex = 0;
+  const newGear = {};
+
+  allSlots.forEach((slotObj, sIndex) => {
+    if (mask & (1 << sIndex)) {
+      const len      = ID_CHAR_LEN;       // 4
+      const idChunk  = idHexes.slice(hexIndex,      hexIndex + len * 3);
+      const mainEnc  = idChunk.slice(0, len);
+      const aug0Enc  = idChunk.slice(len, len * 2);
+      const aug1Enc  = idChunk.slice(len * 2, len * 3);
+      const mainId   = decodeId(mainEnc);
+      const a0       = decodeId(aug0Enc);
+      const a1       = decodeId(aug1Enc);
+      hexIndex += len * 3;
+
+
+      if (mainId && gearByItemId[mainId]) newGear[slotObj.id] = gearByItemId[mainId];
+      if (a0     && gearByItemId[a0])     newGear[`${slotObj.id}-aug0`] = gearByItemId[a0];
+      if (a1     && gearByItemId[a1])     newGear[`${slotObj.id}-aug1`] = gearByItemId[a1];
     }
-    if (skipNextHashLoad.current) {
-      skipNextHashLoad.current = false;
-      return;
-    }
-    if (hashWriteTimer.current) clearTimeout(hashWriteTimer.current);
-    hashWriteTimer.current = window.setTimeout(() => {
-      skipNextHashLoad.current = true;
-      let mask = 0;
-      let encodedIds = "";
+  });
 
-      allSlots.forEach((slotObj, sIndex) => { if (gear[slotObj.id]) {
-      mask |= 1 << sIndex;
-      const itemId = gear[slotObj.id]?.itemId || 0;
-      const aug0Id = gear[`${slotObj.id}-aug0`]?.itemId || 0;
-      const aug1Id = gear[`${slotObj.id}-aug1`]?.itemId || 0;
-      encodedIds += encodeId(itemId) + encodeId(aug0Id) + encodeId(aug1Id);
-    } });
-      const maskBase64 = encodeMaskToBase64url(mask);
-      allSlots.forEach((slotObj, sIndex) => {
-        if (mask & (1 << sIndex)) {
-          const itemId = gear[slotObj.id]?.itemId || 0;
-          const aug0Id = gear[`${slotObj.id}-aug0`]?.itemId || 0;
-          const aug1Id = gear[`${slotObj.id}-aug1`]?.itemId || 0;
-          encodedIds += encodeId(itemId)   + encodeId(aug0Id)   + encodeId(aug1Id);
-        }
-      });
-      const chunkIdSet = new Set();
-      allSlots.forEach((slotObj) => {
-        const slotName = slotObj.id.split("-")[0].toLowerCase();
-        const itemName = gear[slotObj.id]?.ItemName || "";
-        if (itemName) {
-          const key = itemName.slice(0, 3).toLowerCase();
-          for (const filename of Object.keys(chunkFilenameToId)) {
-            const core = filename.replace(/^v1_chunk_/, "").replace(/\.json$/, "");
-            const [slot, start, end] = core.split("_");
-            if (slot === slotName && key >= start && key <= end) {
-              chunkIdSet.add(chunkFilenameToId[filename]);
-              break;
-            }
-          }
-        }
-      });
-      const newChunkKeys = Array.from(chunkIdSet);
-      setChunkKeys(newChunkKeys);
-      const chunkBase64 = encodeChunkIdsToBase64url(newChunkKeys);
-      const classCode = selectedClasses.map((c) => (c ? c : "00")).join("-");
-      let encoded = maskBase64 + ":" + encodedIds + (chunkBase64 ? ":" + chunkBase64 : "");
-      const newHash = classCode ? `#build=${encoded}&classes=${classCode}` : `#build=${encoded}`;
-      const current = window.location.hash;
-      if (current !== newHash && lastParsedHash.current !== newHash) {
-        lastParsedHash.current = newHash;
-        window.history.replaceState(null, "", newHash);
-      }
-      hashWriteTimer.current = null;
-    }, 300);
-    return () => { if (hashWriteTimer.current) clearTimeout(hashWriteTimer.current); };
-  }, [gear, selectedClasses, chunkKeys]);
+  setGear(newGear);
+  isInitializing.current = false;
+}, [initialItemIds, gearByItemId]);
+
 
   useEffect(() => {
     if (!activeSlot || filter.length < 3) return;
@@ -593,24 +575,32 @@ useEffect(() => {
     }
   }, [activeSlot, filter, chunkFilenameToId, initialChunkIds]);
 
+  // 1) Debounced rebuild effect (top‐level)
   useEffect(() => {
-  function handleClickOutside(e) {
-    // grab all open dropdowns (your item + aug lists both have z-50)
-    const dropdowns = document.querySelectorAll(".z-50");
-    const clickedInsideAny = Array.from(dropdowns).some(dd =>
-      dd.contains(e.target)
-    );
-    if (!clickedInsideAny) {
-      // close whatever was open…
-      setActiveSlot(null);
-      // …and clear the search box
-      setFilter("");
+    if (isInitializing.current) {
+      isInitializing.current = false;
+      return;
     }
-  }
+    if (skipNextHashLoad.current) {
+      skipNextHashLoad.current = false;
+      return;
+    }
+    const timer = setTimeout(() => rebuildHash(gear), 300);
+    return () => clearTimeout(timer);
+  }, [gear, selectedClasses, chunkKeys]);
 
-  document.addEventListener("mousedown", handleClickOutside);
-  return () => document.removeEventListener("mousedown", handleClickOutside);
-}, []);
+  // 2) Click‐outside effect (top‐level)
+  useEffect(() => {
+    function handleClickOutside(e) {
+      const dropdowns = document.querySelectorAll(".z-50");
+      if (![...dropdowns].some(dd => dd.contains(e.target))) {
+        setActiveSlot(null);
+        setFilter("");
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   const handleSlotClick = (slot) => { setTimeout(() => { setActiveSlot(slot); setFilter(""); }, 0); };
   const handleItemSelect = (slot, item) => { setGear((p) => ({ ...p, [slot]: item })); setActiveSlot(null); setFilter(""); };
