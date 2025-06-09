@@ -526,11 +526,42 @@ useEffect(() => {
 
 useEffect(() => {
   if (!Array.isArray(initialItemIds) || initialItemIds.length === 0) return;
-  const allPresent = initialItemIds.every((id) => gearByItemId[id]);
-  if (!allPresent) return;
 
+  const presentCount = initialItemIds.filter((id) => gearByItemId[id]).length;
+  const allPresent = presentCount === initialItemIds.length;
+
+  // 🧠 Show a loading message in the console
+  if (!allPresent) {
+    console.log(`⏳ Waiting for gear chunks: ${presentCount}/${initialItemIds.length}`);
+
+    // Track retry progress globally
+    if (!window._gearRetryCount) window._gearRetryCount = 0;
+    if (!window._gearRetryLastCount) window._gearRetryLastCount = 0;
+
+    // Only retry if the count hasn't changed
+    if (presentCount === window._gearRetryLastCount) {
+      window._gearRetryCount++;
+    } else {
+      window._gearRetryCount = 0; // reset if we made progress
+    }
+
+    window._gearRetryLastCount = presentCount;
+
+    if (window._gearRetryCount < 10) {
+      const retry = setTimeout(() => {
+        setInitialItemIds((prev) => [...prev]); // re-trigger effect
+      }, 250);
+      return () => clearTimeout(retry);
+    } else {
+      console.warn("⚠️ Gear fetch retry limit reached. Some items may be missing.");
+    }
+
+    return;
+  }
+
+  // ✅ All items are ready! Apply the gear
   const rawHash = window.location.hash.slice(1);
-  const params  = new URLSearchParams(rawHash);
+  const params = new URLSearchParams(rawHash);
   const [maskEncoded, idHexes] = (params.get("build") || rawHash).split(":");
   const mask = decodeBase64urlMask(maskEncoded);
 
@@ -539,25 +570,25 @@ useEffect(() => {
 
   allSlots.forEach((slotObj, sIndex) => {
     if (mask & (1 << sIndex)) {
-      const len      = ID_CHAR_LEN;       // 4
-      const idChunk  = idHexes.slice(hexIndex,      hexIndex + len * 3);
-      const mainEnc  = idChunk.slice(0, len);
-      const aug0Enc  = idChunk.slice(len, len * 2);
-      const aug1Enc  = idChunk.slice(len * 2, len * 3);
-      const mainId   = decodeId(mainEnc);
-      const a0       = decodeId(aug0Enc);
-      const a1       = decodeId(aug1Enc);
+      const len = ID_CHAR_LEN;
+      const chunk = idHexes.slice(hexIndex, hexIndex + len * 3);
+      const mainId = decodeId(chunk.slice(0, len));
+      const aug0Id = decodeId(chunk.slice(len, len * 2));
+      const aug1Id = decodeId(chunk.slice(len * 2, len * 3));
       hexIndex += len * 3;
 
-
       if (mainId && gearByItemId[mainId]) newGear[slotObj.id] = gearByItemId[mainId];
-      if (a0     && gearByItemId[a0])     newGear[`${slotObj.id}-aug0`] = gearByItemId[a0];
-      if (a1     && gearByItemId[a1])     newGear[`${slotObj.id}-aug1`] = gearByItemId[a1];
+      if (aug0Id && gearByItemId[aug0Id]) newGear[`${slotObj.id}-aug0`] = gearByItemId[aug0Id];
+      if (aug1Id && gearByItemId[aug1Id]) newGear[`${slotObj.id}-aug1`] = gearByItemId[aug1Id];
     }
   });
 
   setGear(newGear);
   isInitializing.current = false;
+
+  // Reset retry tracking
+  window._gearRetryCount = 0;
+  window._gearRetryLastCount = 0;
 }, [initialItemIds, gearByItemId]);
 
 
