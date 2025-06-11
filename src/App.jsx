@@ -37,21 +37,12 @@ const classOptions = [
 ];
 
 const statList = [
-  { label: "Shielding", base: "Shielding" },
-  { label: "SpellShield", base: "SpellShield" },
-  { label: "DoTShield", base: "DoTShield" },
-  { label: "DmgShieldMit", base: "DmgShieldMit" },
-  { label: "Avoidance", base: "Avoidance" },
-  { label: "Attack", base: "Attack" },
-  { label: "Accuracy", base: "Accuracy" },
-  { label: "Strikethrough", base: "Strikethrough" },
-  { label: "StunResist", base: "StunResist" },
-  { label: "Spell Damage", base: "SpellDamage" },
-  { label: "Heal Amount", base: "HealAmount" },
-  { label: "Haste", base: "Haste" },
   { label: "HP", base: "HP" },
   { label: "MP", base: "Mana" },
   { label: "AC", base: "AC" },
+  { label: "Haste", base: "Haste" },
+
+  // === Core Attributes ===
   { label: "STR", heroic: "HStr", base: "Str" },
   { label: "STA", heroic: "HSta", base: "Sta" },
   { label: "AGI", heroic: "HAgi", base: "Agi" },
@@ -59,12 +50,33 @@ const statList = [
   { label: "WIS", heroic: "HWis", base: "Wis" },
   { label: "INT", heroic: "HInt", base: "Int" },
   { label: "CHA", heroic: "HCha", base: "Cha" },
-  { label: "MAGIC", base: "MagicResist", heroic: "HMagic" },
-  { label: "FIRE", base: "FireResist", heroic: "HFire" },
-  { label: "COLD", base: "ColdResist", heroic: "HCold" },
-  { label: "DISEASE", base: "DiseaseResist", heroic: "HDisease" },
-  { label: "POISON", base: "PoisonResist", heroic: "HPoison" },
+
+  // === Resistances ===
+  { label: "MAGIC", heroic: "HMagic", base: "MagicResist" },
+  { label: "FIRE", heroic: "HFire", base: "FireResist" },
+  { label: "COLD", heroic: "HCold", base: "ColdResist" },
+  { label: "POISON", heroic: "HPoison", base: "PoisonResist" },
+  { label: "DISEASE", heroic: "HDisease", base: "DiseaseResist" },
+
+  // === Physical Stats ===
+  { label: "Attack", base: "Attack" },
+  { label: "Accuracy", base: "Accuracy" },
+  { label: "Avoidance", base: "Avoidance" },
+  { label: "Shielding", base: "Shielding" },
+  { label: "Strikethrough", base: "Strikethrough" },
+  { label: "Damage Shield", base: "DmgShieldMit" },
+  { label: "DS Mitigation", base: "DmgShieldMit" },
+
+  // === Magic Stats ===
+  { label: "Spell Damage", base: "SpellDamage" },
+  { label: "Heal Amount", base: "HealAmount" },
+  { label: "Combat Effects", base: "CombatEffects" },
+  { label: "Stun Resist", base: "StunResist" },
+  { label: "Spell Shield", base: "SpellShield" },
+  { label: "DoT Shielding", base: "DoTShield" },
+  { label: "Clairvoyance", base: "Clairvoyance" },
 ];
+
 
 const defaultGear = Object.fromEntries(allSlots.map(({ id }) => [id, null]));
 
@@ -75,20 +87,6 @@ function decodeBase64urlMask(maskStr) {
 }
 
 const BASE64URL_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-
-function decode18BitId(chunk) {
-  const i1 = BASE64URL_CHARS.indexOf(chunk[0]);
-  const i2 = BASE64URL_CHARS.indexOf(chunk[1]);
-  const i3 = BASE64URL_CHARS.indexOf(chunk[2]);
-  return (i1 << 12) | (i2 << 6) | i3;
-}
-
-function encode18BitId(id) {
-  const c1 = (id >> 12) & 0b111111;
-  const c2 = (id >> 6) & 0b111111;
-  const c3 = id & 0b111111;
-  return BASE64URL_CHARS[c1] + BASE64URL_CHARS[c2] + BASE64URL_CHARS[c3];
-}
 
 // Replace encode18BitId
 function encodeId(id) {
@@ -152,6 +150,7 @@ function getItemIconPath(item) {
 }
 
 export default function EQBisPlanner() {
+
   const wrapperRef = useRef(null);
   const pickerRef = useRef(null);
   const isInitializing = useRef(true);
@@ -167,6 +166,7 @@ export default function EQBisPlanner() {
   const [initialChunkIds, setInitialChunkIds] = useState([]);
   const [initialItemIds, setInitialItemIds] = useState([]);
   const [importQueue, setImportQueue] = useState(null);
+      const isBard = selectedClasses.includes("BRD");
 
 
   const { chunkFilenameToId, idToChunkFilename } = useMemo(() => {
@@ -204,95 +204,98 @@ const idToClassMap = {
   // …etc
 };
 
-const handleImportFile = (e) => {
+// Make sure to mark this function async
+const handleImportFile = async (e) => {
   const file = e.target.files?.[0];
   if (!file) return;
 
-  const reader = new FileReader();
-  reader.onload = () => {
-    const rawLines = reader.result.split(/\r?\n/);
-    const lines    = rawLines.slice(1);      // skip header
-    const queue    = {};                     // slotId → itemId
-    const chunkIds = new Set();
+  // 1) Read & split lines (skip header)
+  const text = await file.text();
+  const rawLines = text.split(/\r?\n/).slice(1);
 
-    // Detect classes
-    const seenClasses = new Set();
-    rawLines.slice(1).forEach((line) => {
-      const parts = line.split("\t");
-      const id = parseInt(parts[2], 10);
-      if (idToClassMap[id]) {
-        seenClasses.add(idToClassMap[id]);
-      }
-    });
-    const detected = Array.from(seenClasses).slice(0, 3);
-    while (detected.length < 3) detected.push("");
-    setSelectedClasses(detected);
+  // 2) Detect classes
+  const seen = new Set();
+  rawLines.forEach(line => {
+    const parts = line.split("\t");
+    const id = parseInt(parts[2], 10);
+    if (idToClassMap[id]) seen.add(idToClassMap[id]);
+  });
+  const detected = Array.from(seen).slice(0,3);
+  while (detected.length < 3) detected.push("");
+  setSelectedClasses(detected);
+  const isBard = detected.includes("BRD");
 
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i].trim();
-      if (!line) continue;
+  // 3) Build queue & chunkIds
+  const queue = {};
+  const chunkIds = new Set();
+  for (let i = 0; i < rawLines.length; i++) {
+    const [loc,name,idStr] = rawLines[i].split("\t");
+    const itemId = parseInt(idStr,10);
+    if (!loc || isNaN(itemId) || itemId <= 0) continue;
+    if (loc === "General" || loc === "Power Source") continue;
 
-      const parts = line.split("\t");
-      if (parts.length < 3) continue;
+    const baseLoc  = loc.replace(/-Slot.*$/,"");
+    const slotType = baseLoc.toLowerCase();
+    const slotTypesToTry = (isBard && slotType === "range")
+      ? ["primary","secondary","range"]
+      : [slotType];
 
-      const [loc, name, idStr] = parts;
-      const mainId = parseInt(idStr, 10);
-      if (!loc || isNaN(mainId) || mainId <= 0) continue;
-      if (loc === "General" || loc === "Power Source") continue;
+    // find chunk
+    let info = null;
+    for (const st of slotTypesToTry) {
+      info = findChunkForSlotAndSearch(st, name);
+      if (info) break;
+    }
+    if (info?.id) chunkIds.add(info.id);
 
-      // Primary is handled as a special slot
-      const baseLoc = loc.includes("-Slot") ? loc.split("-")[0] : loc;
-
-      // Find a slot object to target
-      const matches = allSlots.filter((s) => s.label === baseLoc);
-      const slot    = matches.find((s) => !queue[s.id]);
-      if (!slot) continue;
-
-      // Queue base item
-      queue[slot.id] = mainId;
-      const mainChunk = findChunkForSlotAndSearch(baseLoc.toLowerCase(), name);
-      if (mainChunk?.id) chunkIds.add(mainChunk.id);
-
-      // Look ahead for additional Slot lines
-      let augIndex = 0;
-      let lookahead = 1;
-      while (i + lookahead < lines.length) {
-        const nextLine = lines[i + lookahead].trim();
-        if (!nextLine.startsWith(`${baseLoc}-Slot`)) break;
-
-        const augParts = nextLine.split("\t");
-        if (augParts.length < 3) {
-          lookahead++;
-          continue;
-        }
-
-        const [, augName, augIdStr] = augParts;
-        const augId = parseInt(augIdStr, 10);
-        const realName = typeof augName === "string"
-          && augName.trim() !== ""
-          && !/^[0-9]+$/.test(augName)
-          && augName.toLowerCase() !== "empty";
-
-        if (augIndex < 2 && realName && !isNaN(augId) && augId > 0) {
-          const augKey = `${slot.id}-aug${augIndex++}`;
-          queue[augKey] = augId;
-          const augChunk = findChunkForSlotAndSearch("aug", augName);
-          if (augChunk?.id) chunkIds.add(augChunk.id);
-        }
-
-        lookahead++;
-      }
-
-      // Skip processed aug lines
-      i += lookahead - 1;
+    // assign to first free matching slot
+    const matches = allSlots.filter(s => s.label === baseLoc);
+    const slotObj = matches.find(s => !queue[s.id]);
+    if (slotObj) {
+      queue[slotObj.id] = itemId;
     }
 
-    setInitialChunkIds(Array.from(chunkIds));
-    setImportQueue(queue);
-  };
+    // process aug lookahead (same as before)
+    let augIdx = 0, look = 1;
+    while (rawLines[i+look] && rawLines[i+look].startsWith(`${baseLoc}-Slot`)) {
+      const [, augName, augIdStr] = rawLines[i+look].split("\t");
+      const augId = parseInt(augIdStr,10);
+      const real = augName && isNaN(+augName) && augName.toLowerCase()!=="empty";
+      if (augIdx<2 && real && augId>0 && slotObj) {
+        queue[`${slotObj.id}-aug${augIdx}`] = augId;
+        const augInfo = findChunkForSlotAndSearch("aug", augName);
+        if (augInfo?.id) chunkIds.add(augInfo.id);
+        augIdx++;
+      }
+      look++;
+    }
+    i += look - 1;
+  }
 
-  reader.readAsText(file);
-  e.target.value = "";
+  // 4) Fetch all needed chunks in parallel
+  const filenames = Array.from(chunkIds)
+    .map(id => idToChunkFilename[id])
+    .filter(Boolean);
+  const arrays = await Promise.all(
+    filenames.map(fn => getOrFetchChunk(fn, `/gear_chunks/v1/${fn}`))
+  );
+
+  // 5) Build itemId → item map
+  const itemMap = {};
+  arrays.flat().forEach(item => {
+    itemMap[item.itemId] = item;
+  });
+
+  // 6) Assemble new gear
+  const newGear = { ...defaultGear };
+  Object.entries(queue).forEach(([slotId, id]) => {
+    if (itemMap[id]) newGear[slotId] = itemMap[id];
+  });
+  setGear(newGear);
+
+  // 7) Update chunkKeys for URL & rebuild hash
+  setChunkKeys(Array.from(chunkIds));
+  rebuildHash(newGear);
 };
 
 function safeItemId(item) {
@@ -318,32 +321,36 @@ const findChunkForSlotAndSearch = (slotType, searchText) => {
   if (!slotType || !searchText) return null;
   const key = searchText.slice(0, 3).toLowerCase();
 
-  // 1) build a cleaned list of just this slot's chunks
-  const prefix = `v1_chunk_${slotType}_`;
-  const chunks = Object.entries(chunkFilenameToId)
-    .filter(([filename]) => filename.startsWith(prefix))
-    .map(([filename, id]) => {
-      // tail = "#11_bre_25" or "bri_dar_26" etc
-      const tail = filename.slice(prefix.length, -5); // drop prefix & ".json"
-      const [rawStart = "", rawEnd = ""] = tail.split("_", 2);
+  // 1) Determine which slot prefixes to look at
+  const slotTypes = isBard && slotType === "range"
+    ? ["primary", "secondary", "range"]
+    : [slotType];
 
-      const start = rawStart.replace(/[^a-z]/gi, "").toLowerCase();
-      const end   = rawEnd  .replace(/[^a-z]/gi, "").toLowerCase();
-      return { filename, id, start, end };
-    });
 
-  // 2) exact‐end match (so "bre" will hit your "#11_bre_25" chunk)
-  const exact = chunks.find((c) => c.end === key);
-  if (exact) return { filename: exact.filename, id: exact.id };
-
-  // 3) fallback to range test
-  for (const { filename, id, start, end } of chunks) {
-    if (key >= start && key <= end) {
-      return { filename, id };
+  // 2) Build a cleaned list of candidate chunks
+  const chunks = [];
+  for (const [filename, id] of Object.entries(chunkFilenameToId)) {
+    for (const st of slotTypes) {
+      const prefix = `v1_chunk_${st}_`;
+      if (filename.startsWith(prefix)) {
+        // strip prefix and ".json"
+        const tail = filename.slice(prefix.length, -5);
+        // split into up to 2 parts: the alpha start & alpha end
+        const [rawStart = "", rawEnd = ""] = tail.split("_", 2);
+        const start = rawStart.replace(/[^a-z]/gi, "").toLowerCase();
+        const end   = rawEnd  .replace(/[^a-z]/gi, "").toLowerCase();
+        chunks.push({ filename, id, start, end });
+        break;
+      }
     }
   }
 
-  return null;
+  // 3) Exact‐end match (so "bre" hits "#11_bre_25")
+  const exact = chunks.find(c => c.end === key);
+  if (exact) return { filename: exact.filename, id: exact.id };
+
+  // 4) Fallback to alphabetical range test
+  return chunks.find(c => key >= c.start && key <= c.end) || null;
 };
 
 function rebuildHash(currentGear) {
@@ -485,19 +492,36 @@ useEffect(() => {
 
 useEffect(() => {
   if (!importQueue) return;
-
+  // If there are no chunks to load, just apply the imported gear immediately,
+  // rather than pruning everything.
+  if (initialChunkIds.length === 0) {
+    const newGear = { ...defaultGear };
+    Object.entries(importQueue).forEach(([slotId, itemId]) => {
+      // gearByItemId[itemId] should already be populated
+      if (gearByItemId[itemId]) {
+        newGear[slotId] = gearByItemId[itemId];
+      }
+    });
+    setGear(newGear);
+    setImportQueue(null);
+    return;
+  }
   const loadedChunkIds = Object.keys(loadedChunks)
     .map((filename) => chunkFilenameToId[filename])
     .filter((id) => typeof id === "number");
 
   const allItemsReady = initialItemIds.every((id) => gearByItemId[id]);
 
-  if (
-    initialChunkIds.length > 0 &&
-    (loadedChunkIds.length < initialChunkIds.length || !allItemsReady)
-  ) {
-    return; // ⛔ wait until chunks are fully loaded and items have populated
-  }
+   // only bail out if we're still loading _and_ haven't retried enough yet
+   if (initialChunkIds.length > 0) {
+     const stillWaiting = loadedChunkIds.length < initialChunkIds.length || !allItemsReady;
+     if (stillWaiting && window._gearRetryCount < 10) {
+       return; // keep waiting until retryCount reaches 10
+     }
+     if (stillWaiting) {
+       console.warn("⚠️ Chunk load retry limit reached; now pruning orphan slots.");
+     }
+   }
 
   const slotIds = Object.keys(importQueue);
   const orphaned = slotIds.filter((slotId) => {
@@ -637,16 +661,29 @@ useEffect(() => {
   const handleItemSelect = (slot, item) => { setGear((p) => ({ ...p, [slot]: item })); setActiveSlot(null); setFilter(""); };
   const handleClassChange = (idx, val) => { const dup = [...selectedClasses]; dup[idx] = val; setSelectedClasses(dup); };
 
-  const filteredGearData = Object.values(gearByItemId).filter((item) => {
-    if (!activeSlot) return false;
-    const slotType = activeSlot.split("-")[0];
-    const nameMatch = item.ItemName.toLowerCase().includes(filter.toLowerCase());
-    const slotMatch = Array.isArray(item.SlotType) ? item.SlotType.includes(slotType) : item.SlotType === slotType;
-    const allowedClasses = typeof item.CLASSES === "string" ? item.CLASSES.split(",").map((c) => c.trim()) : [];
-    const anyClassSelected = selectedClasses.filter(Boolean);
-    const classOK = anyClassSelected.length === 0 || anyClassSelected.some((c) => allowedClasses.includes(c));
-    return slotMatch && nameMatch && classOK;
-  });
+const filteredGearData = Object.values(gearByItemId).filter((item) => {
+  if (!activeSlot) return false;
+
+  // 1) Normalize
+  const slotType = activeSlot.split("-")[0].toLowerCase();
+  const nameMatch = item.ItemName.toLowerCase().includes(filter.toLowerCase());
+
+  // 2) Turn SlotType into a lowercase array
+  const itemSlots = Array.isArray(item.SlotType)
+    ? item.SlotType.map((s) => s.toLowerCase())
+    : [item.SlotType.toLowerCase()];
+
+  // 3) Base match: itemSlots includes this slot
+  const isBaseMatch = itemSlots.includes(slotType);
+
+  // 4) Bard special: allow primary/secondary in range
+  const isBardRange =
+    isBard &&
+    slotType === "range" &&
+    itemSlots.some((s) => s === "primary" || s === "secondary");
+
+  return nameMatch && (isBaseMatch || isBardRange);
+});
 
   return (
     <div className="w-full bg-gray-900">
@@ -687,7 +724,7 @@ useEffect(() => {
         <div className="flex flex-row flex-wrap lg:flex-nowrap gap-4 justify-center w-full">
           <div className="bg-gray-800 p-4 rounded-lg shadow-xl w-[20rem] space-y-2">
             <h2 className="text-lg font-bold mb-2 text-center">Effects</h2>
-            {["ClickyEffect", "FocusEffectId", "WeaponProc"].map((eKey) => {
+            {["ClickyEffect", "FocusEffectId", "WeaponProc", "BardEffectId"].map((eKey) => {
               const effectsWithSlots = Object.entries(gear)
                 .filter(([slotId, item]) =>
                   item &&
@@ -815,26 +852,39 @@ useEffect(() => {
               </div>
             ))}
           </div>
-          <div className="bg-gray-800 p-4 rounded-lg shadow-xl w-[20rem] space-y-2">
-            <h2 className="text-lg font-bold mb-2 text-center">Stats</h2>
-            {statList.map((stat) => {
-              let baseTotal = 0;
-              let heroicTotal = 0;
-              Object.values(gear).forEach((item) => {
-                if (!item) return;
-                if (stat.base && item[stat.base]) baseTotal += Number(item[stat.base]);
-                if (stat.heroic && item[stat.heroic]) heroicTotal += Number(item[stat.heroic]);
-                if (stat.heroic && item[stat.heroic]) baseTotal += Number(item[stat.heroic]);
-              });
-              return (
-                <div key={stat.label} className="flex justify-between text-sm border-b border-gray-600 py-1">
-                  <span>{stat.label}</span>
-                  <span className="text-green-400">{baseTotal} <span className="text-yellow-300">+{heroicTotal}</span></span>
-                </div>
-              );
-            })}
-            <div className="h-24" />
-          </div>
+
+       <div className="bg-gray-800 p-4 rounded-lg shadow-xl w-[20rem] space-y-2">
+        <h2 className="text-lg font-bold mb-2 text-center">Stats</h2>
+        {statList.map((stat) => {
+          let baseTotal = 0;
+          let heroicTotal = 0;
+          Object.values(gear).forEach((item) => {
+            if (!item) return;
+            if (stat.base && item[stat.base]) baseTotal += Number(item[stat.base]);
+            if (stat.heroic && item[stat.heroic]) heroicTotal += Number(item[stat.heroic]);
+            if (stat.heroic && item[stat.heroic]) baseTotal += Number(item[stat.heroic]);
+          });
+
+          const isResistStart   = stat.label === "MAGIC";
+          const isPhysicalStart = stat.label === "Attack";
+          const isMagicStart    = stat.label === "Spell Damage";
+
+          return (
+            <React.Fragment key={stat.label}>
+              {(isResistStart || isPhysicalStart || isMagicStart) && (
+                <div className="border-t-2 border-gray-600 my-2" />
+              )}
+              <div className="flex justify-between text-sm border-b border-gray-600 py-1">
+                <span>{stat.label}</span>
+                <span className="text-green-400">
+                  {baseTotal} <span className="text-yellow-300">+{heroicTotal}</span>
+                </span>
+              </div>
+            </React.Fragment>
+          );
+        })}
+  <div className="h-24" />
+</div>
         </div>
       </div>
       <Analytics />
