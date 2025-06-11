@@ -1,42 +1,48 @@
 import { openDB } from "idb";
 
-const DB_NAME    = "BISGearChunks";
-const DB_VERSION = 2;
-const STORE_NAME = "chunks";
+const DB_NAME       = "BISGearChunks";
+const DB_STORE      = "chunks";
+const CACHE_VERSION = "v2";                  // bump this to invalidate all old entries
+const CACHE_TTL     = 1000 * 60 * 60 * 24 * 30;   // 24 hours in milliseconds
 
-const dbPromise = openDB(DB_NAME, DB_VERSION, {
-  upgrade(db, oldV, newV) {
-    if (db.objectStoreNames.contains(STORE_NAME)) {
-      db.deleteObjectStore(STORE_NAME);
+// no more upgrade logic needed
+const dbPromise = openDB(DB_NAME, 1, {
+  upgrade(db) {
+    if (!db.objectStoreNames.contains(DB_STORE)) {
+      db.createObjectStore(DB_STORE);
     }
-    db.createObjectStore(STORE_NAME);
-    console.log(`DB upgraded v${oldV}→v${newV}; cache wiped.`);
   },
 });
 
-export async function getOrFetchChunk(rawKey, fetchUrl) {
-  const key = String(rawKey);                   // ← always a string
-  const db = await dbPromise;
+/**
+ * Get a chunk, using a versioned key and 24h expiration.
+ */
+export async function getOrFetchChunk(chunkId, fetchUrl) {
+  const db  = await dbPromise;
+  const key = `${CACHE_VERSION}-${chunkId}`;        // versioned key
 
-  // Debug: print out what keys are in the store right now
-  const allKeys = await db.getAllKeys(STORE_NAME);
-
-  // 1) Try to get
-  const cached = await db.get(STORE_NAME, key);
-  if (cached) {
-    return cached;
+  // 1) Try cached record
+  const record = await db.get(DB_STORE, key);
+  if (record) {
+    const { timestamp, data } = record;
+    // not expired?
+    if (Date.now() - timestamp < CACHE_TTL) {
+      return data;
+    }
+    // otherwise fallthrough to re-fetch
   }
 
-  // 2) Miss → fetch, store, and return
-  const response = await fetch(fetchUrl);
-  if (!response.ok) throw new Error(`Fetch failed ${response.status}`);
-  const data = await response.json();
+  // 2) Fetch & store fresh
+  const resp = await fetch(fetchUrl);
+  if (!resp.ok) throw new Error(`Chunk fetch failed: ${resp.status}`);
+  const data = await resp.json();
 
-  await db.put(STORE_NAME, data, key);
+  await db.put(DB_STORE, { data, timestamp: Date.now() }, key);
   return data;
 }
 
+/** Clear *all* entries immediately (regardless of version). */
 export async function clearChunkCache() {
   const db = await dbPromise;
-  await db.clear(STORE_NAME);
+  await db.clear(DB_STORE);
 }
